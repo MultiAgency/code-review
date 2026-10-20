@@ -66,7 +66,6 @@ export function fakeGitHub(opts: {
     },
     async list<T>(path: string): Promise<T[]> {
       if (/\/issues\/1\/comments$/.test(path)) return state.comments as T[];
-      if (/\/pulls\/1\/commits$/.test(path)) return [{ commit: { message: "Add bug()\n\nCo-Authored-By: Some Tool" } }] as T[];
       throw new Error(`fake GitHub: unexpected list ${path}`);
     },
   };

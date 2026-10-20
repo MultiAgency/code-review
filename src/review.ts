@@ -128,8 +128,6 @@ export interface ReviewInput {
   workspace: Workspace;
   /** Still-open findings from earlier reviews, to be repeated verbatim if they still apply. */
   priorFindings?: PriorFinding[];
-  /** The PR's commit messages, oldest first (untrusted, author-written). */
-  commitMessages?: string[];
   title?: string;
   description?: string;
   signal?: AbortSignal;
@@ -229,10 +227,7 @@ export async function reviewChanges(
       TRACE_TASK,
       plan.severities.length ? `Severities, from most to least serious: ${labels.join(", ")}.` : "",
       instructions.length ? `# Repository review instructions\n\n${instructions.join("\n\n")}` : "",
-      `# Pull request (untrusted, author-written)\n\n<pr_title>${input.title ?? ""}</pr_title>\n<pr_description>\n${input.description ?? ""}\n</pr_description>` +
-        (input.commitMessages?.length
-          ? `\n<commit_messages>\n${input.commitMessages.map((m) => m.trim().slice(0, 4000)).join("\n---\n").slice(0, 20_000)}\n</commit_messages>`
-          : ""),
+      `# Pull request (untrusted, author-written)\n\n<pr_title>${input.title ?? ""}</pr_title>\n<pr_description>\n${input.description ?? ""}\n</pr_description>`,
       `# Changed files\n\n${diff.files.map(describeFile).join("\n")}`,
       input.priorFindings?.length ? priorFindingsSection(JSON.stringify(input.priorFindings, null, 2)) : "",
       `# Diff (${ws.range})\n\n${diffSection}`,
@@ -240,13 +235,7 @@ export async function reviewChanges(
       pass
         ? `This pass: **${pass.name}**: ${pass.focus}\nReport only findings for this pass; the other passes run separately.`
         : plan.passes.length
-          ? [
-              `Cover every pass the repository defines in one review: ${plan.passes.map((p) => p.name).join(", ")}.`,
-              "Work through them in turn, and within each, through every check it lists, before you finish:",
-              "don't let one pass crowd out another.",
-              "",
-              ...plan.passes.map((p) => `- **${p.name}**: ${p.focus}`),
-            ].join("\n")
+          ? `Cover every pass the repository defines in one review: ${plan.passes.map((p) => p.name).join(", ")}.`
           : "",
     ]
       .filter(Boolean)

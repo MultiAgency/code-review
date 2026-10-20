@@ -351,19 +351,5 @@ test("singlePass runs one pass covering every REVIEW.md pass", async () => {
   });
   assert.equal(requests.length, 1);
   assert.match(requests[0]!.prompt, /Cover every pass[\s\S]*Bugs[\s\S]*Security[\s\S]*Compliance/);
-  // Each pass's checks are listed so one pass can't crowd out another.
-  assert.match(requests[0]!.prompt, /in turn[\s\S]*- \*\*Compliance\*\*:[\s\S]*fails without the fix/);
   assert.deepEqual([result.findings[0]!.severity, result.findings[0]!.label], ["high", "Important"]);
-});
-
-test("commit messages are reviewed as untrusted PR text, with the failure-path check", async () => {
-  const r = prRepo();
-  const { runner, requests } = scriptedAgent(() => ok({ summary: "s", findings: [] }));
-  await reviewChanges(
-    { ...(await input(r)), commitMessages: ["Fix the claim sweep\n\nCo-Authored-By: Some Tool"] },
-    { agent: runner, options },
-  );
-  const prompt = requests[0]!.prompt;
-  assert.match(prompt, /<commit_messages>[\s\S]*Co-Authored-By: Some Tool[\s\S]*<\/commit_messages>/);
-  assert.match(prompt, /every new read or write, check what\s+happens when it fails/);
 });

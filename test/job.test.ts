@@ -133,11 +133,3 @@ test("a closed PR is skipped without a review", async () => {
   const outcome = await runReviewJob(job(), deps(gh, scriptedAgent().runner), signal());
   assert.equal(outcome.kind, "skipped");
 });
-
-test("the PR's commit messages reach the review", async () => {
-  const p = pr();
-  const gh = fakeGitHub({ head: p.head, base: p.base, cloneUrl: p.cloneUrl });
-  const { runner, requests } = scriptedAgent(() => ok({ summary: "s", findings: [] }));
-  await runReviewJob(job(), deps(gh, runner), signal());
-  assert.match(requests[0]!.prompt, /<commit_messages>[\s\S]*Co-Authored-By: Some Tool/);
-});

@@ -29,7 +29,7 @@ try {
 const workspace = await openLocalWorkspace({ repoDir: resolve(values.repo), base: values.base, head: values.head });
 try {
   const result = await reviewChanges(
-    { workspace, commitMessages: await workspace.commitMessages(), log: (msg) => console.error(`[claude-pr-review] ${msg}`) },
+    { workspace, log: (msg) => console.error(`[claude-pr-review] ${msg}`) },
     { agent: sdkAgentRunner(agentOptions(config)), options: reviewOptions(config) },
   );
   // Same rendering the service posts, with every finding in the summary.

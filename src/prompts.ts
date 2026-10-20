@@ -50,9 +50,7 @@ export function flagRules(repoDefinesWhatToReport: boolean): string {
 }
 
 // Ours: bugs that span call sites, failure paths and repeated runs are the ones
-// single-file reading misses (near-agencies#212). A longer checklist here (failure paths to
-// callers, fix-vs-test, every mode, PR text) lowered recall on the tuning set (14,14 vs 18,16 of
-// 26 labels over two runs each), so it stays short.
+// single-file reading misses (near-agencies#212).
 export const TRACE_TASK = `
 For every changed function, find every caller of each changed function and how often and when it
 runs (once, per request, on every sweep or loop iteration, on retry), and check the change holds on
