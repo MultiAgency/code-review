@@ -1,0 +1,139 @@
+import assert from "node:assert/strict";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { test } from "node:test";
+import type { JobOutcome } from "../src/job.ts";
+import { openReviewQueue, type Work } from "../src/queue.ts";
+import type { ReviewJob } from "../src/triggers.ts";
+
+const job = (pr: number, over: Partial<ReviewJob> = {}): ReviewJob => ({ repo: "o/r", prNumber: pr, reason: "opened", ...over });
+const done: JobOutcome = { kind: "done", costUsd: 0 };
+const fast = { concurrency: 2, maxAttempts: 3, backoffMs: () => 5, pollMs: 5 };
+
+/** Work that records calls and finishes when told to. */
+function controlled() {
+  const calls: Array<{ job: ReviewJob; signal: AbortSignal; finish: (o?: JobOutcome) => void }> = [];
+  let active = 0;
+  let peak = 0;
+  const work: Work = (j, signal) =>
+    new Promise((resolve, reject) => {
+      active++;
+      peak = Math.max(peak, active);
+      const finish = (o: JobOutcome = done) => {
+        active--;
+        resolve(o);
+      };
+      signal.addEventListener("abort", () => {
+        active--;
+        reject(signal.reason);
+      });
+      calls.push({ job: j, signal, finish });
+    });
+  return { work, calls, peak: () => peak };
+}
+
+const settle = () => new Promise((resolve) => setTimeout(resolve, 30));
+
+test("runs jobs with bounded concurrency", async () => {
+  const w = controlled();
+  const q = openReviewQueue(w.work, { ...fast, dbPath: ":memory:" });
+  for (let pr = 1; pr <= 5; pr++) q.submit(job(pr), `d${pr}`);
+  await settle();
+  assert.equal(w.calls.length, 2);
+  for (let round = 0; round < 3; round++) {
+    w.calls.splice(0).forEach((c) => c.finish());
+    await settle();
+  }
+  await q.whenIdle();
+  assert.equal(w.peak(), 2);
+  await q.close(0);
+});
+
+test("a redelivered webhook is ignored", async () => {
+  const w = controlled();
+  const q = openReviewQueue(w.work, { ...fast, dbPath: ":memory:" });
+  assert.equal(q.submit(job(1), "same"), "queued");
+  assert.equal(q.submit(job(1), "same"), "duplicate");
+  await settle();
+  assert.equal(w.calls.length, 1);
+  w.calls[0]!.finish();
+  await q.whenIdle();
+  await q.close(0);
+});
+
+test("a newer request for the same PR supersedes the running one, which can't overlap it", async () => {
+  const w = controlled();
+  const q = openReviewQueue(w.work, { ...fast, dbPath: ":memory:" });
+  q.submit(job(1), "a");
+  await settle();
+  q.submit(job(1, { reason: "comment", commentId: 9 }), "b");
+  await settle();
+  assert.equal(w.calls[0]!.signal.aborted, true);
+  assert.equal(w.calls.length, 2);
+  assert.equal(w.calls[1]!.job.commentId, 9);
+  w.calls[1]!.finish();
+  await q.whenIdle();
+  await q.close(0);
+});
+
+test("transient failures retry with backoff; others don't", async () => {
+  const outcomes: JobOutcome[] = [
+    { kind: "failed", reason: "github", transient: true, error: "502" },
+    { kind: "failed", reason: "github", transient: true, error: "502" },
+    done,
+    { kind: "failed", reason: "usage_limit", transient: false, error: "429" },
+  ];
+  const seen: number[] = [];
+  const q = openReviewQueue(async (j) => (seen.push(j.prNumber), outcomes.shift()!), { ...fast, dbPath: ":memory:" });
+  q.submit(job(1), "a");
+  await q.whenIdle();
+  assert.deepEqual(seen, [1, 1, 1]);
+  q.submit(job(2), "b");
+  await q.whenIdle();
+  assert.deepEqual(seen, [1, 1, 1, 2]);
+  await q.close(0);
+});
+
+test("gives up after maxAttempts", async () => {
+  let n = 0;
+  const q = openReviewQueue(async () => (n++, { kind: "failed", reason: "git", transient: true, error: "x" }), {
+    ...fast,
+    dbPath: ":memory:",
+  });
+  q.submit(job(1), "a");
+  await q.whenIdle();
+  assert.equal(n, 3);
+  await q.close(0);
+});
+
+test("jobs interrupted by shutdown resume on the next start", async () => {
+  const dbPath = join(mkdtempSync(join(tmpdir(), "queue-")), "jobs.db");
+  const w1 = controlled();
+  const q1 = openReviewQueue(w1.work, { ...fast, dbPath });
+  q1.submit(job(1), "a");
+  q1.submit(job(2), "b");
+  q1.submit(job(3), "c");
+  await settle();
+  w1.calls[0]!.finish();
+  await settle();
+  await q1.close(10);
+
+  const w2 = controlled();
+  const q2 = openReviewQueue(w2.work, { ...fast, dbPath });
+  await settle();
+  assert.deepEqual(w2.calls.map((c) => c.job.prNumber).sort(), [2, 3]);
+  w2.calls.forEach((c) => c.finish());
+  await q2.whenIdle();
+  await q2.close(0);
+});
+
+test("close waits for running jobs within the grace period", async () => {
+  const w = controlled();
+  const q = openReviewQueue(w.work, { ...fast, dbPath: ":memory:" });
+  q.submit(job(1), "a");
+  await settle();
+  setTimeout(() => w.calls[0]!.finish(), 20);
+  await q.close(1000);
+  assert.equal(w.calls[0]!.signal.aborted, false);
+});

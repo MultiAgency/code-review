@@ -1,73 +1,117 @@
-import type { EffortLevel } from "@anthropic-ai/claude-agent-sdk";
+import { z } from "zod";
+import type { SdkAgentOptions } from "./agent.js";
+import type { ReviewOptions } from "./review.js";
 
-function env(name: string, fallback?: string): string | undefined {
-  const value = process.env[name]?.trim();
-  return value ? value : fallback;
-}
+const num = (fallback: number, check: (s: z.ZodNumber) => z.ZodNumber = (s) => s) =>
+  z
+    .string()
+    .trim()
+    .optional()
+    .transform((v) => (v === undefined || v === "" ? fallback : Number(v)))
+    .pipe(check(z.number({ error: (issue) => (issue.code === "invalid_type" ? "must be a number" : undefined) })));
 
-function bool(name: string, fallback: boolean): boolean {
-  const value = env(name);
-  return value === undefined ? fallback : value === "true" || value === "1";
-}
+const bool = (fallback: boolean) =>
+  z
+    .string()
+    .trim()
+    .optional()
+    .transform((v, ctx) => {
+      if (v === undefined || v === "") return fallback;
+      if (["true", "1"].includes(v)) return true;
+      if (["false", "0"].includes(v)) return false;
+      ctx.addIssue({ code: "custom", message: "must be true or false" });
+      return z.NEVER;
+    });
 
-export const config = {
+const optionalText = z
+  .string()
+  .trim()
+  .optional()
+  .transform((v) => (v ? v : undefined));
+
+const Env = z.object({
   // Unset = Claude Code's default model for the account.
-  model: env("REVIEW_MODEL"),
-  effort: env("REVIEW_EFFORT", "high") as EffortLevel,
-  // Hard cap per agent run (review and verify each get this much).
-  maxBudgetUsd: Number(env("REVIEW_MAX_BUDGET_USD", "10")),
-  maxTurns: Number(env("REVIEW_MAX_TURNS", "80")),
-  // A second pass that tries to refute each finding and drops the ones it can.
-  verify: bool("REVIEW_VERIFY", true),
+  REVIEW_MODEL: optionalText,
+  REVIEW_EFFORT: z.enum(["low", "medium", "high", "xhigh", "max"]).default("high"),
+  // Hard cap per agent pass (review and verify each get this much).
+  REVIEW_MAX_BUDGET_USD: num(10, (s) => s.positive()),
+  REVIEW_MAX_TURNS: num(80, (s) => s.int().positive()),
+  REVIEW_PASS_TIMEOUT_MIN: num(20, (s) => s.positive()),
+  REVIEW_JOB_TIMEOUT_MIN: num(50, (s) => s.positive()),
+  // A second pass that tries to refute each finding.
+  REVIEW_VERIFY: bool(true),
   // Off by default: reviews are only logged until you opt in.
-  postReviews: bool("POST_REVIEWS", false),
+  POST_REVIEWS: bool(false),
+  // High/medium findings posted inline per review; the rest go in the summary.
+  REVIEW_MAX_INLINE_COMMENTS: num(10, (s) => s.int().min(0)),
   // Diffs larger than this go to a file Claude reads instead of the prompt.
-  inlineDiffChars: Number(env("REVIEW_INLINE_DIFF_CHARS", "120000")),
+  REVIEW_INLINE_DIFF_CHARS: num(120_000, (s) => s.int().positive()),
+  // A PR comment line starting with this requests a review.
+  REVIEW_TRIGGER: z.string().trim().min(1).default("@private-review"),
+  REVIEW_MAX_ATTEMPTS: num(3, (s) => s.int().min(1)),
 
-  // A PR comment line starting with this requests a (re-)review.
-  reviewTrigger: env("REVIEW_TRIGGER", "@private-review")!,
+  PORT: num(8080, (s) => s.int().min(1).max(65535)),
+  MAX_CONCURRENT_REVIEWS: num(2, (s) => s.int().min(1)),
+  // Persisted review jobs; put it on a volume so deploys don't lose them.
+  QUEUE_DB: z.string().trim().min(1).default("/data/jobs.db"),
+  // On SIGTERM, how long running reviews get to finish before they're re-queued.
+  SHUTDOWN_GRACE_SECONDS: num(25, (s) => s.min(0)),
 
-  port: Number(env("PORT", "8080")),
-  maxConcurrent: Number(env("MAX_CONCURRENT_REVIEWS", "2")),
-  webhookSecret: env("GITHUB_WEBHOOK_SECRET"),
+  GITHUB_WEBHOOK_SECRET: optionalText,
   // Comma-separated owner/repo list; empty means every repo the app is installed on.
-  allowedRepos: (env("ALLOWED_REPOS") ?? "")
-    .split(",")
-    .map((s) => s.trim().toLowerCase())
-    .filter(Boolean),
-  githubApiUrl: env("GITHUB_API_URL", "https://api.github.com")!,
-  githubAppId: env("GITHUB_APP_ID"),
-  // PEM, either raw or with literal "\n" sequences (common in PaaS env editors).
-  githubAppPrivateKey: env("GITHUB_APP_PRIVATE_KEY")?.replace(/\\n/g, "\n"),
+  ALLOWED_REPOS: z
+    .string()
+    .optional()
+    .transform((v) =>
+      (v ?? "")
+        .split(",")
+        .map((s) => s.trim().toLowerCase())
+        .filter(Boolean),
+    ),
+  GITHUB_API_URL: z.url().default("https://api.github.com"),
+  GITHUB_APP_ID: optionalText,
+  // PEM, raw or with literal "\n" sequences (common in PaaS env editors).
+  GITHUB_APP_PRIVATE_KEY: optionalText.transform((v) => v?.replace(/\\n/g, "\n")),
   // Fallback when not running as a GitHub App (fine-grained PAT).
-  githubToken: env("GITHUB_TOKEN"),
-};
+  GITHUB_TOKEN: optionalText,
+});
 
-// Variables the Claude subprocess may see. Everything else (GitHub credentials,
-// the webhook secret) is withheld so a prompt-injected PR cannot read it back.
-const CLAUDE_ENV_PREFIXES = ["ANTHROPIC_", "CLAUDE_CODE_", "AWS_", "CLOUD_ML_", "GOOGLE_", "VERTEX_"];
-const CLAUDE_ENV_NAMES = ["PATH", "HOME", "LANG", "TMPDIR", "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY", "NODE_EXTRA_CA_CERTS"];
+export type Config = z.output<typeof Env>;
 
-export function claudeEnv(): Record<string, string> {
-  const out: Record<string, string> = { CLAUDE_AGENT_SDK_CLIENT_APP: "claude-pr-review/0.1.0" };
-  for (const [key, value] of Object.entries(process.env)) {
-    if (value === undefined) continue;
-    if (CLAUDE_ENV_NAMES.includes(key) || CLAUDE_ENV_PREFIXES.some((p) => key.startsWith(p))) {
-      out[key] = value;
-    }
+export class ConfigError extends Error {}
+
+/** Reads and validates settings from the environment; throws one error listing every problem. */
+export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
+  const parsed = Env.safeParse(env);
+  if (!parsed.success) {
+    const problems = parsed.error.issues.map((i) => `  ${i.path.join(".")}: ${i.message}`);
+    throw new ConfigError(`Invalid configuration:\n${problems.join("\n")}`);
   }
-  return out;
+  return parsed.data;
 }
 
-const SECRET_NAMES = /KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL/i;
-
-/** Masks any secret env value that ends up in text we are about to publish. */
-export function redactSecrets(text: string): string {
-  let out = text;
-  for (const [key, value] of Object.entries(process.env)) {
-    if (value && value.length >= 12 && SECRET_NAMES.test(key)) {
-      out = out.split(value).join("[redacted]");
-    }
+/** The webhook service also needs a secret and a way to authenticate to GitHub. */
+export function checkServiceConfig(config: Config): void {
+  const problems: string[] = [];
+  if (!config.GITHUB_WEBHOOK_SECRET) problems.push("  GITHUB_WEBHOOK_SECRET: required");
+  const app = Boolean(config.GITHUB_APP_ID) || Boolean(config.GITHUB_APP_PRIVATE_KEY);
+  if (app && !(config.GITHUB_APP_ID && config.GITHUB_APP_PRIVATE_KEY)) {
+    problems.push("  GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY: set both, or neither");
   }
-  return out;
+  if (!app && !config.GITHUB_TOKEN) problems.push("  GitHub auth: set GITHUB_APP_ID + GITHUB_APP_PRIVATE_KEY, or GITHUB_TOKEN");
+  if (problems.length) throw new ConfigError(`Invalid configuration:\n${problems.join("\n")}`);
+}
+
+export function agentOptions(config: Config): SdkAgentOptions {
+  return {
+    ...(config.REVIEW_MODEL ? { model: config.REVIEW_MODEL } : {}),
+    effort: config.REVIEW_EFFORT,
+    maxBudgetUsd: config.REVIEW_MAX_BUDGET_USD,
+    maxTurns: config.REVIEW_MAX_TURNS,
+    timeoutMs: config.REVIEW_PASS_TIMEOUT_MIN * 60_000,
+  };
+}
+
+export function reviewOptions(config: Config): ReviewOptions {
+  return { verify: config.REVIEW_VERIFY, inlineDiffChars: config.REVIEW_INLINE_DIFF_CHARS };
 }

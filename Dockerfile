@@ -16,7 +16,8 @@ ENV NODE_ENV=production
 COPY --from=build /app/package.json ./
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
+RUN mkdir -p /data && chown node:node /data
 USER node
-ENV HOME=/home/node PORT=8080
+ENV HOME=/home/node PORT=8080 QUEUE_DB=/data/jobs.db
 EXPOSE 8080
-CMD ["node", "dist/server.js"]
+CMD ["node", "dist/main.js"]
