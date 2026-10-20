@@ -23,7 +23,7 @@ export interface JobDeps {
 export type JobOutcome =
   | { kind: "done"; costUsd: number }
   | { kind: "skipped"; why: string }
-  | { kind: "failed"; reason: FailureReason; transient: boolean; error: string };
+  | { kind: "failed"; reason: FailureReason; transient: boolean; error: string; costUsd?: number };
 
 const AGENT_REASON: Record<AgentFailureKind, FailureReason> = {
   auth_or_limit: "usage_limit",
@@ -123,6 +123,7 @@ export async function runReviewJob(job: ReviewJob, deps: JobDeps, outer: AbortSi
     const message = error instanceof Error ? error.message : String(error);
     log({ level: "error", msg: "review failed", reason, stage, error: message });
     await publisher.failed(reason, prior).catch((e) => log({ level: "error", msg: "couldn't report failure", error: String(e) }));
-    return { kind: "failed", reason, transient, error: message };
+    const costUsd = error instanceof ReviewFailedError ? error.costUsd : 0;
+    return { kind: "failed", reason, transient, error: message, costUsd };
   }
 }

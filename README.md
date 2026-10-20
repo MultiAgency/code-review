@@ -85,7 +85,7 @@ filesystem ones against the real SDK.
 | Reading outside the repo (`/proc/self/environ`, `~/…`, symlinks in the PR) | A `PreToolUse` hook resolves real paths and denies anything outside the checkout, `~` paths, and `..` in glob patterns. |
 | Leaking credentials | Claude's process gets only its own auth (no GitHub credentials or webhook secret). Git gets neither. Secret values are redacted from everything posted. |
 | Forged state or one-click suggestions | Only the service's own summary comment is trusted as state. Model text can't open `suggestion` blocks or write hidden markers. |
-| Runaway cost or hangs | Per-pass budget, turn and time limits; a job timeout; per-call timeouts on git and GitHub; bounded concurrency. |
+| Runaway cost or hangs | A budget per review shared by its passes, per-pass caps, a daily spend cap, turn and time limits, a job timeout, per-call timeouts on git and GitHub, and bounded concurrency. |
 
 The model credential is necessarily visible to the Claude process.
 
@@ -152,7 +152,10 @@ wrong.
 | `REVIEW_MODEL` | (Claude Code default) | Pin a model ID, e.g. `claude-opus-5-5` |
 | `REVIEW_EFFORT` | `high` | `low` … `max` |
 | `REVIEW_VERIFY` | `true` | Run the verify pass |
-| `REVIEW_MAX_BUDGET_USD` | `10` | Per pass |
+| `REVIEW_BUDGET_USD` | `12` | Per review, across all passes (80% review passes, 20% verify) |
+| `REVIEW_MAX_BUDGET_USD` | `10` | Ceiling for any single pass |
+| `REVIEW_MAX_PARALLEL_PASSES` | `2` | Review passes running at once within one review |
+| `DAILY_BUDGET_USD` | `50` | Reviews stop starting once a UTC day's spend reaches this; they wait for the next day. `0` = no cap |
 | `REVIEW_MAX_TURNS` | `80` | Per pass |
 | `REVIEW_PASS_TIMEOUT_MIN` | `20` | Per pass |
 | `REVIEW_JOB_TIMEOUT_MIN` | `50` | Whole review, including fetch and publish |
@@ -189,7 +192,9 @@ docker run -p 8080:8080 -v pr-review-data:/data --env-file .env claude-pr-review
 ```
 
 - **Shutdown:** give the platform a stop timeout above `SHUTDOWN_GRACE_SECONDS`.
-- **Resources:** plan on about 2 GB RAM per concurrent review, plus disk for checkouts, which
+- **Resources:** each pass is its own Claude Code process. Up to
+  `MAX_CONCURRENT_REVIEWS × REVIEW_MAX_PARALLEL_PASSES` run at once (4 by default). Plan on
+  roughly 1–2 GB RAM per process (an estimate, not measured), plus disk for checkouts, which
   are deleted after each review.
 
 ### 5. Turn it on

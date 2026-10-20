@@ -137,3 +137,41 @@ test("close waits for running jobs within the grace period", async () => {
   await q.close(1000);
   assert.equal(w.calls[0]!.signal.aborted, false);
 });
+
+test("a daily spend cap holds further jobs until the next UTC day", async () => {
+  let clock = Date.parse("2026-10-21T10:00:00Z");
+  const seen: number[] = [];
+  const q = openReviewQueue(async (j) => (seen.push(j.prNumber), { kind: "done", costUsd: 5 }), {
+    ...fast,
+    concurrency: 1,
+    dbPath: ":memory:",
+    dailyBudgetUsd: 8,
+    now: () => clock,
+  });
+  q.submit(job(1), "a");
+  q.submit(job(2), "b");
+  q.submit(job(3), "c");
+  await settle();
+  await settle();
+  // $5 then $10 spent: the cap stops the third job, which stays queued.
+  assert.deepEqual(seen, [1, 2]);
+  assert.equal(q.stats().queued, 1);
+  clock = Date.parse("2026-10-22T00:00:01Z");
+  await q.whenIdle();
+  assert.deepEqual(seen, [1, 2, 3]);
+  await q.close(0);
+});
+
+test("failed jobs count toward the daily cap too", async () => {
+  const seen: number[] = [];
+  const q = openReviewQueue(
+    async (j) => (seen.push(j.prNumber), { kind: "failed", reason: "budget", transient: false, error: "x", costUsd: 9 }),
+    { ...fast, dbPath: ":memory:", dailyBudgetUsd: 8, concurrency: 1 },
+  );
+  q.submit(job(1), "a");
+  q.submit(job(2), "b");
+  await settle();
+  await settle();
+  assert.deepEqual(seen, [1]);
+  await q.close(0);
+});

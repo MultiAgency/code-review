@@ -81,6 +81,7 @@ const queue = openReviewQueue(review, {
   dbPath: config.QUEUE_DB,
   concurrency: config.MAX_CONCURRENT_REVIEWS,
   maxAttempts: config.REVIEW_MAX_ATTEMPTS,
+  ...(config.DAILY_BUDGET_USD > 0 ? { dailyBudgetUsd: config.DAILY_BUDGET_USD } : {}),
   log,
 });
 

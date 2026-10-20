@@ -297,3 +297,35 @@ test("two findings marked duplicates of each other keep one", async () => {
   const result = await reviewChanges(await input(r), { agent: runner, options });
   assert.equal(result.findings.length, 1);
 });
+
+test("one review budget is split across passes and verify, and passes run at most N at a time", async () => {
+  let running = 0;
+  let peak = 0;
+  const budgets: Array<number | undefined> = [];
+  const slow = (data: unknown) => async (req: { maxBudgetUsd?: number }) => {
+    budgets.push(req.maxBudgetUsd);
+    running++;
+    peak = Math.max(peak, running);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    running--;
+    return ok(data);
+  };
+  const runner = {
+    async run(req: any) {
+      const step = [
+        slow({ summary: "s", findings: [finding()] }),
+        slow({ summary: "s", findings: [] }),
+        slow({ summary: "s", findings: [] }),
+        slow({ verdicts: [] }),
+      ][budgets.length]!;
+      return step(req) as any;
+    },
+  };
+  await reviewChanges(await input(prRepo(PASSES_REVIEW_MD)), {
+    agent: runner,
+    options: { ...options, reviewBudgetUsd: 8, maxParallelPasses: 2 },
+  });
+  assert.equal(peak, 2);
+  // 3 passes share 80% of the budget; verify gets the remaining 20%.
+  assert.deepEqual(budgets.map((b) => b?.toFixed(2)), ["2.13", "2.13", "2.13", "1.60"]);
+});

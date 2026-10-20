@@ -12,6 +12,9 @@ export interface QueueOptions {
   maxAttempts: number;
   backoffMs?: (attempt: number) => number;
   pollMs?: number;
+  /** Stop starting reviews once this much has been spent today (UTC); they wait for tomorrow. */
+  dailyBudgetUsd?: number;
+  now?: () => number;
   log?: (fields: Record<string, unknown>) => void;
 }
 
@@ -51,8 +54,18 @@ export function openReviewQueue(work: Work, options: QueueOptions): ReviewQueue 
       updated INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS jobs_status ON jobs (status, run_after);
+    CREATE TABLE IF NOT EXISTS spend (day TEXT PRIMARY KEY, usd REAL NOT NULL);
   `);
-  const now = () => Date.now();
+  const now = options.now ?? (() => Date.now());
+  const today = () => new Date(now()).toISOString().slice(0, 10);
+  const spentToday = () =>
+    (db.prepare("SELECT usd FROM spend WHERE day = ?").get(today()) as { usd: number } | undefined)?.usd ?? 0;
+  const addSpend = (usd: number) => {
+    if (usd > 0) {
+      db.prepare("INSERT INTO spend (day, usd) VALUES (?, ?) ON CONFLICT (day) DO UPDATE SET usd = usd + excluded.usd").run(today(), usd);
+    }
+  };
+  let capLogged = "";
   // A crash or an expired grace period left these mid-run: run them again.
   db.prepare("UPDATE jobs SET status = 'queued' WHERE status = 'running'").run();
   db.prepare("DELETE FROM jobs WHERE status IN ('done', 'failed', 'superseded') AND updated < ?").run(now() - 7 * 864e5);
@@ -74,6 +87,13 @@ export function openReviewQueue(work: Work, options: QueueOptions): ReviewQueue 
 
   function pump() {
     if (closing) return;
+    if (options.dailyBudgetUsd !== undefined && spentToday() >= options.dailyBudgetUsd) {
+      if (capLogged !== today()) {
+        capLogged = today();
+        log({ level: "warn", msg: "daily review budget reached; queued reviews wait until tomorrow (UTC)", spentUsd: spentToday() });
+      }
+      return;
+    }
     const ready = db
       .prepare("SELECT id, pr, payload, attempts FROM jobs WHERE status = 'queued' AND run_after <= ? ORDER BY id")
       .all(now()) as Array<{ id: number; pr: string; payload: string; attempts: number }>;
@@ -94,6 +114,7 @@ export function openReviewQueue(work: Work, options: QueueOptions): ReviewQueue 
       let next: Status = "done";
       try {
         const outcome = await work(job, controller.signal);
+        addSpend(outcome.kind === "skipped" ? 0 : (outcome.costUsd ?? 0));
         log({ pr, msg: "job finished", attempt, ...outcome });
         if (outcome.kind === "failed") {
           if (outcome.transient && attempt < options.maxAttempts) {

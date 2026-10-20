@@ -33,8 +33,13 @@ const Env = z.object({
   // Unset = Claude Code's default model for the account.
   REVIEW_MODEL: optionalText,
   REVIEW_EFFORT: z.enum(["low", "medium", "high", "xhigh", "max"]).default("high"),
-  // Hard cap per agent pass (review and verify each get this much).
+  // Cap per agent pass, and per review across all its passes (80% review passes, 20% verify).
   REVIEW_MAX_BUDGET_USD: num(10, (s) => s.positive()),
+  REVIEW_BUDGET_USD: num(12, (s) => s.positive()),
+  // Review passes running at once per review; each is a Claude Code process.
+  REVIEW_MAX_PARALLEL_PASSES: num(2, (s) => s.int().min(1)),
+  // Reviews stop starting once this much is spent in a UTC day (estimated at API prices); 0 = no cap.
+  DAILY_BUDGET_USD: num(50, (s) => s.min(0)),
   REVIEW_MAX_TURNS: num(80, (s) => s.int().positive()),
   REVIEW_PASS_TIMEOUT_MIN: num(20, (s) => s.positive()),
   REVIEW_JOB_TIMEOUT_MIN: num(50, (s) => s.positive()),
@@ -113,5 +118,10 @@ export function agentOptions(config: Config): SdkAgentOptions {
 }
 
 export function reviewOptions(config: Config): ReviewOptions {
-  return { verify: config.REVIEW_VERIFY, inlineDiffChars: config.REVIEW_INLINE_DIFF_CHARS };
+  return {
+    verify: config.REVIEW_VERIFY,
+    inlineDiffChars: config.REVIEW_INLINE_DIFF_CHARS,
+    reviewBudgetUsd: config.REVIEW_BUDGET_USD,
+    maxParallelPasses: config.REVIEW_MAX_PARALLEL_PASSES,
+  };
 }

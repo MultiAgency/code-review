@@ -29,6 +29,8 @@ export interface AgentRequest<T> {
   /** Directories the agent may read; the first is also where relative paths resolve. */
   roots: string[];
   signal?: AbortSignal;
+  /** Spend cap for this pass; the runner's own cap still applies if lower. */
+  maxBudgetUsd?: number;
 }
 
 /** One agent pass: read-only access to `roots`, structured output matching `schema`. */
@@ -89,7 +91,7 @@ export function sdkAgentRunner(options: SdkAgentOptions): AgentRunner {
             env: claudeEnv(),
             systemPrompt: { type: "preset", preset: "claude_code", append: REVIEW_MODE },
             outputFormat: { type: "json_schema", schema: jsonSchema },
-            maxBudgetUsd: options.maxBudgetUsd,
+            maxBudgetUsd: Math.min(options.maxBudgetUsd, request.maxBudgetUsd ?? Infinity),
             maxTurns: options.maxTurns,
             abortController,
           },

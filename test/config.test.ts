@@ -38,3 +38,12 @@ test("the service needs a webhook secret and complete GitHub auth", () => {
   assert.throws(() => checkServiceConfig(loadConfig({ GITHUB_WEBHOOK_SECRET: "s" })), /GitHub auth/);
   checkServiceConfig(loadConfig({ GITHUB_WEBHOOK_SECRET: "s", GITHUB_TOKEN: "t" }));
 });
+
+test("cost limits have safe defaults and 0 turns the daily cap off", () => {
+  const c = loadConfig({});
+  assert.equal(c.REVIEW_BUDGET_USD, 12);
+  assert.equal(c.REVIEW_MAX_PARALLEL_PASSES, 2);
+  assert.equal(c.DAILY_BUDGET_USD, 50);
+  assert.equal(loadConfig({ DAILY_BUDGET_USD: "0" }).DAILY_BUDGET_USD, 0);
+  assert.throws(() => loadConfig({ REVIEW_MAX_PARALLEL_PASSES: "0" }), ConfigError);
+});

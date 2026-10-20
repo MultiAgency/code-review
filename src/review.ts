@@ -116,6 +116,10 @@ export interface ReviewOptions {
   verify: boolean;
   /** Diffs longer than this go to a file the agent reads instead of the prompt. */
   inlineDiffChars: number;
+  /** Spend cap for the whole review: 80% shared by the review passes, 20% for verify. */
+  reviewBudgetUsd?: number;
+  /** Review passes running at once (each is a Claude Code process). */
+  maxParallelPasses?: number;
 }
 
 export interface ReviewInput {
@@ -233,8 +237,9 @@ export async function reviewChanges(
 
   log(`review: ${diff.files.length} files (${diff.skipped.length} skipped), ${diff.text.length} diff chars, ${passes.length} pass(es)`);
   const schema = reviewOutput(labels);
-  const runs = await Promise.all(
-    passes.map((pass) => agent.run({ prompt: promptFor(pass), schema, roots, signal: input.signal })),
+  const passBudget = options.reviewBudgetUsd === undefined ? {} : { maxBudgetUsd: (options.reviewBudgetUsd * 0.8) / passes.length };
+  const runs = await mapLimited(passes, options.maxParallelPasses ?? passes.length, (pass) =>
+    agent.run({ prompt: promptFor(pass), schema, roots, signal: input.signal, ...passBudget }),
   );
   let costUsd = runs.reduce((sum, r) => sum + r.costUsd, 0);
   const failed = runs.find((r) => !r.ok);
@@ -282,6 +287,7 @@ export async function reviewChanges(
       schema: VerifyOutput,
       roots,
       signal: input.signal,
+      ...(options.reviewBudgetUsd === undefined ? {} : { maxBudgetUsd: options.reviewBudgetUsd * 0.2 }),
     });
     costUsd += verify.costUsd;
     if (verify.ok) {
@@ -372,6 +378,20 @@ function trimBlankEdges(lines: string[]): string[] {
 
 function describeFile(f: ChangedFile): string {
   return f.previousPath ? `- ${f.path} (${f.status} from ${f.previousPath})` : `- ${f.path} (${f.status})`;
+}
+
+/** Like Promise.all over `items`, with at most `limit` running at once; results keep their order. */
+async function mapLimited<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      results[i] = await fn(items[i]!);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, worker));
+  return results;
 }
 
 /** Findings sometimes name files by absolute path or with a leading `./`. */
