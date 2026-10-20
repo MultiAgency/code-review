@@ -185,3 +185,12 @@ test("instruction imports skip symlinks and stop at size and depth limits", asyn
   assert.ok(!names.includes("big.md"), "oversized file included");
   assert.ok(names.includes("d3.md") && !names.includes("d6.md"), `depth not capped: ${names.join(",")}`);
 });
+
+test("local workspace lists the change's commit messages, oldest first", async () => {
+  const repo = gitRepo();
+  const base = repo.commit({ "a.ts": "1\n" }, "base");
+  repo.commit({ "a.ts": "1\n2\n" }, "first change\n\nwith a body");
+  const head = repo.commit({ "a.ts": "1\n2\n3\n" }, "second change");
+  const ws = track(await openLocalWorkspace({ repoDir: repo.dir, base, head }));
+  assert.deepEqual(await ws.commitMessages(), ["first change\n\nwith a body", "second change"]);
+});

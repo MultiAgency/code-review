@@ -120,7 +120,13 @@ async function runCase({ pr, c, title, body }: (typeof todo)[number]) {
   });
   try {
     const result = await reviewChanges(
-      { workspace, title, description: body, log: (msg) => console.error(`[${label}] ${msg}`) },
+      {
+        workspace,
+        title,
+        description: body,
+        commitMessages: await workspace.commitMessages(),
+        log: (msg) => console.error(`[${label}] ${msg}`),
+      },
       { agent, options },
     );
     const s = await scoreCase(c, result.findings);

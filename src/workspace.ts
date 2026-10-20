@@ -40,6 +40,8 @@ export interface Workspace {
    * plus the repo files they `@import` (followed safely, also from the base).
    */
   instructions(): Promise<Array<{ name: string; text: string }>>;
+  /** The change's commit messages, oldest first; empty where history isn't fetched (PR workspaces). */
+  commitMessages(): Promise<string[]>;
   dispose(): Promise<void>;
 }
 
@@ -123,6 +125,7 @@ export async function openPullRequestWorkspace(opts: {
     diffArgs: [`${opts.diffBase}..${opts.headSha}`],
     range: `${opts.diffBase.slice(0, 12)}..${opts.headSha.slice(0, 12)}`,
     instructionsRef: "refs/review/base",
+    logRange: undefined,
     gitOpts,
     dispose: () => rm(workDir, { recursive: true, force: true }),
   });
@@ -152,6 +155,7 @@ export async function openLocalWorkspace(opts: { repoDir: string; base: string; 
     diffArgs: [`${opts.base}...${headSha}`],
     range: `${opts.base}...${opts.head}`,
     instructionsRef: opts.base,
+    logRange: `${opts.base}..${headSha}`,
     gitOpts,
     dispose: async () => {
       await git(opts.repoDir, ["worktree", "remove", "--force", repoDir]).catch(() => {});
@@ -167,6 +171,8 @@ function makeWorkspace(w: {
   diffArgs: string[];
   range: string;
   instructionsRef: string;
+  /** Range for commit messages, when history is available. */
+  logRange: string | undefined;
   gitOpts: GitOptions;
   dispose: () => Promise<void>;
 }): Workspace {
@@ -204,6 +210,11 @@ function makeWorkspace(w: {
       };
       for (const name of ["CLAUDE.md", "REVIEW.md"]) await visit(name, 0);
       return found;
+    },
+    async commitMessages() {
+      if (!w.logRange) return [];
+      const out = await git(w.repoDir, ["log", "--reverse", "--format=%B%x00", w.logRange], w.gitOpts);
+      return out.split("\0").map((m) => m.trim()).filter(Boolean);
     },
     dispose: w.dispose,
   };

@@ -54,6 +54,9 @@ export async function runReviewJob(job: ReviewJob, deps: JobDeps, outer: AbortSi
     const pr = await getPullRequest(gh, job.repo, job.prNumber);
     if (pr.state !== "open") return { kind: "skipped", why: "PR is no longer open" };
     prior = await publisher.prior();
+    // From the API: the checkout is shallow, so git has no history to read them from.
+    const commitMessages = (await gh.list<{ commit: { message: string } }>(`/repos/${job.repo}/pulls/${job.prNumber}/commits`))
+      .map((c) => c.commit.message);
 
     // Re-reviews cover only new commits, unless the branch was rewritten or a
     // full review was asked for.
@@ -88,6 +91,7 @@ export async function runReviewJob(job: ReviewJob, deps: JobDeps, outer: AbortSi
           title: pr.title,
           description: pr.body ?? "",
           priorFindings: priorFindings(prior),
+          commitMessages,
           signal,
           log: (msg) => log({ msg }),
         },
