@@ -1,6 +1,6 @@
 # 07 Improvements from the near-agencies#212 comparison
 
-Status: claimed
+Status: resolved
 Type: task
 
 Compared against the repo's `ai-review` and Private Investigator on #212, ours found the one bug both
@@ -14,3 +14,12 @@ Built test-first (tdd skill), seams agreed with the user:
 3. `reviewChanges()` tells every pass to trace callers and run frequency; returns `checked`.
 4. `buildReport()` shows pass and label, and a "Checked:" line.
 5. `src/eval.ts` (`ledgerCases`, `score`) + `src/backtest.ts` runner.
+
+## Answer
+
+Done 2026-10-21. Replay of #212@003383a: 11 findings, $2.93; judged recall 1/3 (F5 found via the
+@AGENTS.md import and the Compliance pass; F9 and F11 missed). The line-window scorer gave 2 false
+hits and 1 false miss on the same data, so `judgedScore` + `agentJudge` replaced it as the default
+(line window kept behind `--line-window`); `--rescore` re-scores saved runs. Verify kept 11/11 in
+both runs — leniency unknown until a larger sample. Backtest bug found and fixed: it wasn't passing
+the PR title/body (caused a false "no Plan/Verification" finding).

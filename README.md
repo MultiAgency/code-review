@@ -247,8 +247,13 @@ npm run backtest -- --repo owner/name --pr 212   # replay labelled PRs and score
 
 `backtest` reads the hidden `ai-review-ledger` that a reviewer leaves on each round's PR comment,
 and treats each round's still-open findings as labels. It replays that commit through this
-reviewer, then reports recall and precision against the labels. It uses a file plus a 15-line
-window, and only replays each PR's last round unless you pass `--all-rounds`.
+reviewer, then reports recall and precision against the labels. It only replays each PR's last
+round unless you pass `--all-rounds`.
+
+Matching is judged by a cheap agent call ("does any of our findings report the same defect?").
+Line numbers drift between rounds, and one bug can be reported at its cause or its symptom.
+Pass `--line-window N` to match by file and line instead, which is free but unreliable. Use
+`--rescore results.json` to score saved results again without re-running reviews.
 
 "Extras" in the output aren't necessarily false positives: the labels miss real bugs too, so
 read them.

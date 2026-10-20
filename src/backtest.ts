@@ -1,5 +1,7 @@
 // Replays PRs whose comments carry `ai-review-ledger` labels and scores our review against them:
-//   node dist/backtest.js --repo owner/name --pr 212 [--pr 94] [--all-rounds] [--window 15] [--out results.json]
+//   node dist/backtest.js --repo owner/name --pr 212 [--pr 94] [--all-rounds] [--out results.json]
+//   node dist/backtest.js --rescore results.json       (score saved results again, no review runs)
+// Matching is judged by an agent (same defect?) unless --line-window N is given.
 // By default only each PR's last labelled commit is replayed (one paid review per PR); --all-rounds
 // replays every round. Uses `gh` for GitHub and the same config as the CLI. Never posts.
 import { execFile } from "node:child_process";
@@ -9,7 +11,9 @@ import { join } from "node:path";
 import { parseArgs, promisify } from "node:util";
 import { sdkAgentRunner } from "./agent.js";
 import { agentOptions, loadConfig, reviewOptions } from "./config.js";
-import { ledgerCases, score } from "./eval.js";
+import { agentJudge, judgedScore, ledgerCases, score, type EvalCase } from "./eval.js";
+import { readFile } from "node:fs/promises";
+import type { Finding } from "./review.js";
 import { git } from "./git.js";
 import { reviewChanges } from "./review.js";
 import { openLocalWorkspace } from "./workspace.js";
@@ -23,18 +27,46 @@ const { values } = parseArgs({
     repo: { type: "string" },
     pr: { type: "string", multiple: true },
     "all-rounds": { type: "boolean", default: false },
-    window: { type: "string", default: "15" },
+    "line-window": { type: "string" },
     out: { type: "string" },
+    rescore: { type: "string" },
   },
 });
-if (!values.repo || !values.pr?.length) {
-  console.error("usage: backtest --repo owner/name --pr N [--pr N ...] [--all-rounds] [--window 15] [--out file]");
+if (!values.rescore && (!values.repo || !values.pr?.length)) {
+  console.error("usage: backtest --repo owner/name --pr N [--pr N ...] [--all-rounds] [--line-window N] [--out file]");
+  console.error("       backtest --rescore results.json [--line-window N]");
   process.exit(1);
 }
-const repo = values.repo;
-const window = Number(values.window);
 const config = loadConfig();
 const agent = sdkAgentRunner(agentOptions(config));
+const judge = agentJudge(
+  sdkAgentRunner({ effort: "low", maxBudgetUsd: 0.5, maxTurns: 3, timeoutMs: 5 * 60_000 }),
+  await mkdtemp(join(tmpdir(), "judge-")),
+);
+const scoreCase = (c: EvalCase, findings: Finding[]) =>
+  values["line-window"] ? Promise.resolve(score(c.expected, findings, { window: Number(values["line-window"]) })) : judgedScore(c.expected, findings, judge);
+
+function report(label: string, c: EvalCase, findings: Finding[], s: Awaited<ReturnType<typeof scoreCase>>, costUsd: number) {
+  console.log(`${label}: recall ${s.hits.length}/${c.expected.length}, precision vs labels ${s.hits.length}/${findings.length}, $${costUsd.toFixed(2)}`);
+  for (const h of s.hits) console.log(`  hit    ${h.expected.id} ${h.expected.gist ?? ""}\n         ~ ${h.found.file}:${h.found.line} ${h.found.title}`);
+  for (const m of s.misses) console.log(`  missed ${m.id} ${m.path}:${m.line} ${m.gist ?? ""}`);
+  for (const e of s.extras) console.log(`  extra  ${e.file}:${e.line} ${e.title}`);
+}
+
+if (values.rescore) {
+  const saved = JSON.parse(await readFile(values.rescore, "utf8")) as Array<{ pr: string; sha: string; expected: EvalCase["expected"]; findings: Finding[]; costUsd: number }>;
+  let expected = 0;
+  let hits = 0;
+  for (const r of saved) {
+    const s = await scoreCase({ sha: r.sha, expected: r.expected }, r.findings);
+    report(`#${r.pr}@${r.sha.slice(0, 7)}`, { sha: r.sha, expected: r.expected }, r.findings, s, r.costUsd);
+    expected += r.expected.length;
+    hits += s.hits.length;
+  }
+  console.log(`\nTotal: recall ${hits}/${expected}.`);
+  process.exit(0);
+}
+const repo = values.repo!;
 
 const cloneDir = join(await mkdtemp(join(tmpdir(), "backtest-")), "repo");
 await run("git", ["clone", "--quiet", `https://github.com/${repo}`, cloneDir]);
@@ -45,7 +77,7 @@ let hitTotal = 0;
 let foundTotal = 0;
 let costTotal = 0;
 
-for (const pr of values.pr) {
+for (const pr of values.pr!) {
   const comments = await gh<Array<{ body: string }>>("api", "--paginate", "--slurp", `repos/${repo}/issues/${pr}/comments`).then(
     (pages) => (pages as unknown as Array<Array<{ body: string }>>).flat(),
   );
@@ -70,18 +102,12 @@ for (const pr of values.pr) {
         { workspace, title, description: body, log: (msg) => console.error(`[${label}] ${msg}`) },
         { agent, options: reviewOptions(config) },
       );
-      const s = score(c.expected, result.findings, { window });
+      const s = await scoreCase(c, result.findings);
       expectedTotal += c.expected.length;
       hitTotal += s.hits.length;
       foundTotal += result.findings.length;
       costTotal += result.costUsd;
-      console.log(
-        `${label}: recall ${s.hits.length}/${c.expected.length}, precision vs labels ${s.hits.length}/${result.findings.length}, $${result.costUsd.toFixed(2)}`,
-      );
-      // Matching is by file and line window only: check each hit really is the same bug.
-      for (const h of s.hits) console.log(`  hit    ${h.expected.id} ${h.expected.gist ?? ""}\n         ~ ${h.found.file}:${h.found.line} ${h.found.title}`);
-      for (const m of s.misses) console.log(`  missed ${m.id} ${m.path}:${m.line} ${m.gist ?? ""}`);
-      for (const e of s.extras) console.log(`  extra  ${e.file}:${e.line} ${e.title}`);
+      report(label, c, result.findings, s, result.costUsd);
       results.push({ pr, sha: c.sha, expected: c.expected, findings: result.findings, checked: result.checked, score: s, costUsd: result.costUsd });
     } finally {
       await workspace.dispose();
