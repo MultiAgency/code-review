@@ -35,6 +35,12 @@ support, unused bindings, docs-only PRs without a Plan), 0 wrong. Recall over va
 | v2 / v4 | 12, 12 / 11, 13 | |
 | v1 `xhigh` | 15, 14 | |
 
+| v1, 2 samples | 16, 15 (84%, 78%) | 11 (68%) |
+
+Two samples: better on tuning (28/28 findings verified real), no gain on held-out at 2× cost, so the
+default stays 1 sample. Held-out valid misses are systematic: 4 Compliance Nits (#130 hand-written
+stubs, docs consistency) and one error-path Nit.
+
 v1's two runs missed different valid labels (only 3 of 7 missed in both): the union of two runs
 would score 16/19 (84%), which motivates review samples.
 
