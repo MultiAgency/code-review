@@ -329,3 +329,27 @@ test("one review budget is split across passes and verify, and passes run at mos
   // 3 passes share 80% of the budget; verify gets the remaining 20%.
   assert.deepEqual(budgets.map((b) => b?.toFixed(2)), ["2.13", "2.13", "2.13", "1.60"]);
 });
+
+test("passes share one prompt prefix (diff included) so it can be cached; only the end differs", async () => {
+  const { runner, requests } = scriptedAgent(
+    () => ok({ summary: "s", findings: [] }),
+    () => ok({ summary: "s", findings: [] }),
+    () => ok({ summary: "s", findings: [] }),
+  );
+  await reviewChanges(await input(prRepo(PASSES_REVIEW_MD)), { agent: runner, options });
+  const prompts = requests.map((r) => r.prompt);
+  const cut = prompts[0]!.indexOf("This pass:");
+  assert.ok(cut > prompts[0]!.indexOf("```diff"), "pass line must come after the diff");
+  for (const p of prompts) assert.equal(p.slice(0, cut), prompts[0]!.slice(0, cut));
+});
+
+test("singlePass runs one pass covering every REVIEW.md pass", async () => {
+  const { runner, requests } = scriptedAgent(() => ok({ summary: "s", findings: [finding({ severity: "Important" })] }));
+  const result = await reviewChanges(await input(prRepo(PASSES_REVIEW_MD)), {
+    agent: runner,
+    options: { ...options, verify: false, singlePass: true },
+  });
+  assert.equal(requests.length, 1);
+  assert.match(requests[0]!.prompt, /Cover every pass[\s\S]*Bugs[\s\S]*Security[\s\S]*Compliance/);
+  assert.deepEqual([result.findings[0]!.severity, result.findings[0]!.label], ["high", "Important"]);
+});

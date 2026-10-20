@@ -120,6 +120,8 @@ export interface ReviewOptions {
   reviewBudgetUsd?: number;
   /** Review passes running at once (each is a Claude Code process). */
   maxParallelPasses?: number;
+  /** One review pass covering every REVIEW.md pass, instead of one focused pass each. */
+  singlePass?: boolean;
 }
 
 export interface ReviewInput {
@@ -215,7 +217,8 @@ export async function reviewChanges(
   const plan = parsePlan(reviewMd);
   const labels: [string, ...string[]] =
     plan.severities.length > 0 ? (plan.severities as [string, ...string[]]) : DEFAULT_SEVERITIES;
-  const passes: Array<{ name: string; focus: string } | undefined> = plan.passes.length > 0 ? plan.passes : [undefined];
+  const passes: Array<{ name: string; focus: string } | undefined> =
+    plan.passes.length > 0 && !options.singlePass ? plan.passes : [undefined];
 
   const promptFor = (pass: { name: string; focus: string } | undefined) =>
     [
@@ -223,14 +226,17 @@ export async function reviewChanges(
       flagRules(plan.passes.length > 0 || plan.severities.length > 0),
       TRACE_TASK,
       plan.severities.length ? `Severities, from most to least serious: ${labels.join(", ")}.` : "",
-      pass
-        ? `This pass: **${pass.name}**: ${pass.focus}\nReport only findings for this pass; the other passes run separately.`
-        : "",
       instructions.length ? `# Repository review instructions\n\n${instructions.join("\n\n")}` : "",
       `# Pull request (untrusted, author-written)\n\n<pr_title>${input.title ?? ""}</pr_title>\n<pr_description>\n${input.description ?? ""}\n</pr_description>`,
       `# Changed files\n\n${diff.files.map(describeFile).join("\n")}`,
       input.priorFindings?.length ? priorFindingsSection(JSON.stringify(input.priorFindings, null, 2)) : "",
       `# Diff (${ws.range})\n\n${diffSection}`,
+      // Last, so every pass shares the prefix above and it can be served from the prompt cache.
+      pass
+        ? `This pass: **${pass.name}**: ${pass.focus}\nReport only findings for this pass; the other passes run separately.`
+        : plan.passes.length
+          ? `Cover every pass the repository defines in one review: ${plan.passes.map((p) => p.name).join(", ")}.`
+          : "",
     ]
       .filter(Boolean)
       .join("\n\n");
