@@ -37,6 +37,8 @@ const { values } = parseArgs({
     resume: { type: "boolean", default: false },
     "multi-pass": { type: "boolean", default: false },
     samples: { type: "string" },
+    "extra-passes": { type: "string" },
+    "earlier-rounds": { type: "boolean", default: false },
   },
 });
 if (!values.rescore && (!values.repo || !values.pr?.length)) {
@@ -86,6 +88,7 @@ const options = {
   ...reviewOptions(config),
   ...(values["multi-pass"] ? { singlePass: false } : {}),
   ...(values.samples ? { samples: Number(values.samples) } : {}),
+  ...(values["extra-passes"] ? { extraPasses: values["extra-passes"].split(",") } : {}),
 };
 
 // Gather every case first; git fetches and worktree changes share one repo, so they run one at a time.
@@ -96,7 +99,9 @@ for (const pr of values.pr!) {
   );
   const { title, body } = await gh<{ title: string; body: string }>("pr", "view", pr, "-R", repo, "--json", "title,body");
   let cases = ledgerCases(comments);
-  if (!values["all-rounds"]) cases = cases.slice(-1);
+  // --earlier-rounds: every round but the last, as a second tuning set that leaves final rounds held out.
+  if (values["earlier-rounds"]) cases = cases.slice(0, -1).filter((c) => c.sha && c.expected.length);
+  else if (!values["all-rounds"]) cases = cases.slice(-1);
   if (cases.length === 0) console.error(`#${pr}: no ai-review ledger found`);
   for (const c of cases) {
     if (done.has(`${pr}@${c.sha}`)) continue;

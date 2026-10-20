@@ -124,6 +124,8 @@ export interface ReviewOptions {
   singlePass?: boolean;
   /** Independent runs of each pass, merged; the verify pass removes duplicates between them. */
   samples?: number;
+  /** With one combined pass: REVIEW.md passes (by name) that also get a focused pass of their own. */
+  extraPasses?: string[];
 }
 
 export interface ReviewInput {
@@ -219,8 +221,11 @@ export async function reviewChanges(
   const plan = parsePlan(reviewMd);
   const labels: [string, ...string[]] =
     plan.severities.length > 0 ? (plan.severities as [string, ...string[]]) : DEFAULT_SEVERITIES;
+  const extra = new Set((options.extraPasses ?? []).map((n) => n.toLowerCase()));
   const passes: Array<{ name: string; focus: string } | undefined> =
-    plan.passes.length > 0 && !options.singlePass ? plan.passes : [undefined];
+    plan.passes.length > 0 && !options.singlePass
+      ? plan.passes
+      : [undefined, ...plan.passes.filter((p) => extra.has(p.name.toLowerCase()))];
 
   const promptFor = (pass: { name: string; focus: string } | undefined) =>
     [
@@ -269,7 +274,8 @@ export async function reviewChanges(
   runs.forEach((run, n) => {
     if (!run.ok) return;
     const pass = runPasses[n];
-    if (!summarised.has(pass?.name)) {
+    // With a combined pass, its summary speaks for the review; focused extras add findings only.
+    if (!summarised.has(pass?.name) && !(pass && passes.includes(undefined))) {
       summarised.add(pass?.name);
       summaries.push(pass && passes.length > 1 ? `**${pass.name}:** ${run.data.summary}` : run.data.summary);
     }

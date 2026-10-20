@@ -41,6 +41,11 @@ const Env = z.object({
   REVIEW_SINGLE_PASS: bool(true),
   // Independent runs of the review, merged before verify; misses vary between runs.
   REVIEW_SAMPLES: num(1, (s) => s.int().min(1).max(4)),
+  // Comma-separated REVIEW.md pass names that also get a focused pass next to the combined one.
+  REVIEW_EXTRA_PASSES: z
+    .string()
+    .optional()
+    .transform((v) => (v ?? "").split(",").map((s) => s.trim()).filter(Boolean)),
   // Review passes running at once per review; each is a Claude Code process.
   REVIEW_MAX_PARALLEL_PASSES: num(2, (s) => s.int().min(1)),
   // Reviews stop starting once this much is spent in a UTC day (estimated at API prices); 0 = no cap.
@@ -130,5 +135,6 @@ export function reviewOptions(config: Config): ReviewOptions {
     maxParallelPasses: config.REVIEW_MAX_PARALLEL_PASSES,
     singlePass: config.REVIEW_SINGLE_PASS,
     samples: config.REVIEW_SAMPLES,
+    extraPasses: config.REVIEW_EXTRA_PASSES,
   };
 }

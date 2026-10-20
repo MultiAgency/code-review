@@ -366,3 +366,25 @@ test("samples run the same review several times and merge what any of them found
   assert.deepEqual(result.findings.map((f) => f.title).sort(), ["Only first", "Only second", "Seen by both"]);
   assert.equal(result.summary, "first");
 });
+
+test("extraPasses add a focused pass for a named REVIEW.md pass next to the combined one", async () => {
+  const { runner, requests } = scriptedAgent(
+    () => ok({ summary: "combined", findings: [finding({ title: "Logic bug", severity: "Important" })] }),
+    () => ok({ summary: "compliance", findings: [finding({ title: "Stub is hand-written", severity: "Nit", line: 3 })] }),
+  );
+  const result = await reviewChanges(await input(prRepo(PASSES_REVIEW_MD)), {
+    agent: runner,
+    options: { ...options, verify: false, singlePass: true, extraPasses: ["Compliance", "Not a pass"] },
+  });
+  assert.equal(requests.length, 2);
+  assert.match(requests[0]!.prompt, /Cover every pass/);
+  assert.match(requests[1]!.prompt, /This pass: \*\*Compliance\*\*/);
+  assert.deepEqual(
+    result.findings.map((f) => [f.title, f.pass]),
+    [
+      ["Logic bug", undefined],
+      ["Stub is hand-written", "Compliance"],
+    ],
+  );
+  assert.equal(result.summary, "combined");
+});
