@@ -36,6 +36,7 @@ const { values } = parseArgs({
     parallel: { type: "string", default: "3" },
     resume: { type: "boolean", default: false },
     "multi-pass": { type: "boolean", default: false },
+    samples: { type: "string" },
   },
 });
 if (!values.rescore && (!values.repo || !values.pr?.length)) {
@@ -81,7 +82,11 @@ type Result = { pr: string; sha: string; expected: EvalCase["expected"]; finding
 const results: Result[] =
   values.resume && values.out ? JSON.parse(await readFile(values.out, "utf8").catch(() => "[]")) : [];
 const done = new Set(results.map((r) => `${r.pr}@${r.sha}`));
-const options = { ...reviewOptions(config), ...(values["multi-pass"] ? { singlePass: false } : {}) };
+const options = {
+  ...reviewOptions(config),
+  ...(values["multi-pass"] ? { singlePass: false } : {}),
+  ...(values.samples ? { samples: Number(values.samples) } : {}),
+};
 
 // Gather every case first; git fetches and worktree changes share one repo, so they run one at a time.
 const todo: Array<{ pr: string; c: EvalCase; title: string; body: string }> = [];

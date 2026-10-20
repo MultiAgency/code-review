@@ -122,6 +122,8 @@ export interface ReviewOptions {
   maxParallelPasses?: number;
   /** One review pass covering every REVIEW.md pass, instead of one focused pass each. */
   singlePass?: boolean;
+  /** Independent runs of each pass, merged; the verify pass removes duplicates between them. */
+  samples?: number;
 }
 
 export interface ReviewInput {
@@ -241,10 +243,17 @@ export async function reviewChanges(
       .filter(Boolean)
       .join("\n\n");
 
-  log(`review: ${diff.files.length} files (${diff.skipped.length} skipped), ${diff.text.length} diff chars, ${passes.length} pass(es)`);
+  // Each pass can run as several independent samples: a single run misses different things each
+  // time, so the union of samples finds more than any one of them.
+  const samples = Math.max(1, options.samples ?? 1);
+  const runPasses = passes.flatMap((pass) => Array.from({ length: samples }, () => pass));
+  log(
+    `review: ${diff.files.length} files (${diff.skipped.length} skipped), ${diff.text.length} diff chars, ` +
+      `${passes.length} pass(es) × ${samples} sample(s)`,
+  );
   const schema = reviewOutput(labels);
-  const passBudget = options.reviewBudgetUsd === undefined ? {} : { maxBudgetUsd: (options.reviewBudgetUsd * 0.8) / passes.length };
-  const runs = await mapLimited(passes, options.maxParallelPasses ?? passes.length, (pass) =>
+  const passBudget = options.reviewBudgetUsd === undefined ? {} : { maxBudgetUsd: (options.reviewBudgetUsd * 0.8) / runPasses.length };
+  const runs = await mapLimited(runPasses, options.maxParallelPasses ?? runPasses.length, (pass) =>
     agent.run({ prompt: promptFor(pass), schema, roots, signal: input.signal, ...passBudget }),
   );
   let costUsd = runs.reduce((sum, r) => sum + r.costUsd, 0);
@@ -256,10 +265,14 @@ export async function reviewChanges(
   let findings: Array<Omit<Finding, "placement">> = [];
   const summaries: string[] = [];
   const checked: string[] = [];
+  const summarised = new Set<string | undefined>();
   runs.forEach((run, n) => {
     if (!run.ok) return;
-    const pass = passes[n];
-    summaries.push(pass && passes.length > 1 ? `**${pass.name}:** ${run.data.summary}` : run.data.summary);
+    const pass = runPasses[n];
+    if (!summarised.has(pass?.name)) {
+      summarised.add(pass?.name);
+      summaries.push(pass && passes.length > 1 ? `**${pass.name}:** ${run.data.summary}` : run.data.summary);
+    }
     for (const item of run.data.checked ?? []) if (!checked.includes(item)) checked.push(item);
     for (const raw of run.data.findings) {
       const file = repoRelative(raw.file, ws.repoDir);

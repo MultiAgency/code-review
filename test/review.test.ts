@@ -353,3 +353,16 @@ test("singlePass runs one pass covering every REVIEW.md pass", async () => {
   assert.match(requests[0]!.prompt, /Cover every pass[\s\S]*Bugs[\s\S]*Security[\s\S]*Compliance/);
   assert.deepEqual([result.findings[0]!.severity, result.findings[0]!.label], ["high", "Important"]);
 });
+
+test("samples run the same review several times and merge what any of them found", async () => {
+  const { runner, requests } = scriptedAgent(
+    () => ok({ summary: "first", findings: [finding({ title: "Seen by both" }), finding({ title: "Only first", line: 3 })] }),
+    () => ok({ summary: "second", findings: [finding({ title: "Seen by both" }), finding({ title: "Only second", line: 3 })] }),
+    () => ok({ verdicts: [] }),
+  );
+  const result = await reviewChanges(await input(prRepo()), { agent: runner, options: { ...options, samples: 2 } });
+  assert.equal(requests.length, 3);
+  assert.equal(requests[0]!.prompt, requests[1]!.prompt);
+  assert.deepEqual(result.findings.map((f) => f.title).sort(), ["Only first", "Only second", "Seen by both"]);
+  assert.equal(result.summary, "first");
+});
