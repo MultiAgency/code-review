@@ -1,0 +1,4 @@
+{
+  "note": "Audit of the near-agencies eval labels (ai-review ledger findings) by verification agents reading the code at each commit, 2026-10-21. 50 labels: 35 valid, 15 trivial, 0 wrong. Score recall over valid labels; trivial ones are things a good reviewer may rightly skip.",
+  "trivial": ["138:F2", "139:F2", "153:F1", "153:F2", "145:F3", "176:F2", "194:F1", "151:F1", "146:F1", "133:F1", "154:F2", "160:F2", "185:F1", "208:F1", "209:F1"]
+}

@@ -25,6 +25,19 @@ between runs of the same version. Compare versions on at least two runs each.
 Comparison on the same commits (9 tuning PRs): Private Investigator matched 3/23 labels (14
 findings: 5 real, 1 plausible, 5 trivial, 3 wrong); ours 17/23 (1 pass).
 
+Label audit (label-audit.json): of 50 labels, 35 valid, 15 trivial (e.g. `Map.groupBy` browser
+support, unused bindings, docs-only PRs without a Plan), 0 wrong. Recall over valid labels:
+
+| Version | Tuning (19 valid) | Held-out (16 valid) |
+|---|---|---|
+| 1 pass v1 | 15, 13 (78%, 68%) | 11 (68%) |
+| 3 passes | 14 (73%) | |
+| v2 / v4 | 12, 12 / 11, 13 | |
+| v1 `xhigh` | 15, 14 | |
+
+v1's two runs missed different valid labels (only 3 of 7 missed in both): the union of two runs
+would score 16/19 (84%), which motivates review samples.
+
 Findings so far:
 - Every Important label was found by every 1-pass v1 run except one (4/5); all misses are Nits,
   mostly Compliance on the held-out set.
