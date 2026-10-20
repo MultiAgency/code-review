@@ -49,3 +49,11 @@ Findings so far:
   mostly Compliance on the held-out set.
 - Prompt additions, extra passes and more effort all left recall at ~17/26; the ceiling appears to be
   elsewhere (see the label audit).
+
+## In progress (stopped 2026-10-21 at the Claude usage limit)
+
+Tuning set 2 (`--earlier-rounds` on #131 #132 #134 #135 #144 #148 #173 #180 #183 #207; 15 cases) was
+cut off by the session limit (429) part-way: baseline finished 8 cases (recall 15/21, Compliance 1/4),
+`--extra-passes Compliance` finished 7 (16/18, Compliance 2/3). Different case sets, so not yet
+comparable. Resume with `--resume --out <same file>` once usage resets; then audit this set's labels
+(clones with its commits: /tmp/backtest-blE9Jr/repo, /tmp/backtest-zF4rFq/repo) and score on valid labels.
