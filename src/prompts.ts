@@ -50,23 +50,15 @@ export function flagRules(repoDefinesWhatToReport: boolean): string {
 }
 
 // Ours: bugs that span call sites, failure paths and repeated runs are the ones
-// single-file reading misses (near-agencies#212).
+// single-file reading misses (near-agencies#212). A longer checklist here (failure paths to
+// callers, fix-vs-test, every mode, PR text) lowered recall on the tuning set (14,14 vs 18,16 of
+// 26 labels over two runs each), so it stays short.
 export const TRACE_TASK = `
 For every changed function, find every caller of each changed function and how often and when it
 runs (once, per request, on every sweep or loop iteration, on retry), and check the change holds on
-each of those paths, not only the one its comments describe. Give every changed file its own look.
-
-Also check, where the change has them:
-- Failure paths: when each new read or write throws or is refused, follow it to the caller that
-  catches it and what else is skipped as a result (the rest of a loop, cycle or request). Compare
-  with how sibling calls in the same change are guarded.
-- Fixes and tests: for each bug the change fixes, does a test exercise the code that was actually
-  changed, so it could have failed before the fix?
-- New user-facing text (messages, comments, docs): is it true in
-  every mode or configuration that reaches it?
-- The PR description and commit messages against the repository's rules for them.
-
-List what you traced in checked.
+each of those paths, not only the one its comments describe. For every new read or write, check what
+happens when it fails or returns nothing. Give every changed file its own look. List what you traced
+in checked.
 `.trim();
 
 export function priorFindingsSection(json: string): string {

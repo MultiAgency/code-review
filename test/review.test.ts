@@ -351,10 +351,12 @@ test("singlePass runs one pass covering every REVIEW.md pass", async () => {
   });
   assert.equal(requests.length, 1);
   assert.match(requests[0]!.prompt, /Cover every pass[\s\S]*Bugs[\s\S]*Security[\s\S]*Compliance/);
+  // Each pass's checks are listed so one pass can't crowd out another.
+  assert.match(requests[0]!.prompt, /in turn[\s\S]*- \*\*Compliance\*\*:[\s\S]*fails without the fix/);
   assert.deepEqual([result.findings[0]!.severity, result.findings[0]!.label], ["high", "Important"]);
 });
 
-test("commit messages are reviewed as untrusted PR text, and the blind-spot checks are asked for", async () => {
+test("commit messages are reviewed as untrusted PR text, with the failure-path check", async () => {
   const r = prRepo();
   const { runner, requests } = scriptedAgent(() => ok({ summary: "s", findings: [] }));
   await reviewChanges(
@@ -363,8 +365,5 @@ test("commit messages are reviewed as untrusted PR text, and the blind-spot chec
   );
   const prompt = requests[0]!.prompt;
   assert.match(prompt, /<commit_messages>[\s\S]*Co-Authored-By: Some Tool[\s\S]*<\/commit_messages>/);
-  assert.match(prompt, /throws or is refused[\s\S]*what else is skipped/);
-  assert.match(prompt, /test[\s\S]*could have failed before the fix/);
-  assert.match(prompt, /every mode or configuration that reaches it/);
-  assert.match(prompt, /description and commit messages against the repository's rules/);
+  assert.match(prompt, /every new read or write, check what\s+happens when it fails/);
 });

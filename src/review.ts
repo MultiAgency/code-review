@@ -240,7 +240,13 @@ export async function reviewChanges(
       pass
         ? `This pass: **${pass.name}**: ${pass.focus}\nReport only findings for this pass; the other passes run separately.`
         : plan.passes.length
-          ? `Cover every pass the repository defines in one review: ${plan.passes.map((p) => p.name).join(", ")}.`
+          ? [
+              `Cover every pass the repository defines in one review: ${plan.passes.map((p) => p.name).join(", ")}.`,
+              "Work through them in turn, and within each, through every check it lists, before you finish:",
+              "don't let one pass crowd out another.",
+              "",
+              ...plan.passes.map((p) => `- **${p.name}**: ${p.focus}`),
+            ].join("\n")
           : "",
     ]
       .filter(Boolean)
