@@ -259,3 +259,9 @@ Pass `--line-window N` to match by file and line instead, which is free but unre
 read them.
 
 Design notes and the work log are in `.scratch/review-hardening/`.
+
+## Credits
+
+The review and verify prompts in `src/prompts.ts` are adapted from
+[open-code-review](https://github.com/alibaba/open-code-review) (Apache-2.0) and
+[PR-Agent](https://github.com/The-PR-Agent/pr-agent) (MIT). See [NOTICE](NOTICE).

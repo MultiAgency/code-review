@@ -2,6 +2,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import type { AgentFailureKind, AgentRunner } from "./agent.js";
+import { flagRules, priorFindingsSection, TRACE_TASK, VERIFY_TASK } from "./prompts.js";
 import type { ChangedFile, Workspace } from "./workspace.js";
 
 type Severity = "high" | "medium" | "low";
@@ -176,45 +177,9 @@ function toSeverity(label: string, labels: string[]): Severity {
   return "medium";
 }
 
-// Bugs that span call sites (code that runs more often, or from more places, than its
-// author assumed) are the ones single-file reading misses.
-const TRACE_TASK = `
-For every changed function, find every caller of each changed function and how often and when it
-runs (once, per request, on every sweep or loop iteration, on retry). Check the change holds on
-each of those paths, not only the one its comments describe. List what you traced in checked.
-`.trim();
 
-const PLAN_TASK = `
-Report what the repository's review instructions below ask for, at the severities they define.
-Before reporting a finding, read the surrounding code and the callers you depend on to confirm
-it. Each finding must point at a line on the NEW side of a changed file, with a path relative to
-the repository root. An empty list is a fine answer.
-`.trim();
 
-const REVIEW_TASK = `
-Report only real defects a maintainer would want fixed before merging: incorrect behavior,
-crashes, security problems, data loss, races, broken API contracts, resource leaks, and error
-handling that fails with a concrete consequence. Do not report style, naming, formatting, or
-speculative concerns unless the repository's review instructions ask for them.
 
-Before reporting a finding, read the surrounding code and the callers you depend on to confirm
-it. Each finding must point at a line on the NEW side of a changed file, with a path relative to
-the repository root. Prefer fewer, certain findings over many uncertain ones; an empty list is a
-fine answer.
-`.trim();
-
-const VERIFY_TASK = `
-Another reviewer reported the findings below. Check each one against the code and decide
-whether it stands.
-
-Set keep=false only when you can prove the finding wrong: the code it describes is not in the
-change, the input or state it needs cannot occur, or code that already handles it exists. Put
-that proof, quoting the code, in reason. If you cannot prove it wrong, or you run out of room to
-check, keep it. Return one verdict per index.
-
-Findings come from separate passes, so two may describe the same defect in different words. Keep
-the clearer one and set keep=false on the other with reason "duplicate of <index>".
-`.trim();
 
 export async function reviewChanges(
   input: ReviewInput,
@@ -251,7 +216,7 @@ export async function reviewChanges(
   const promptFor = (pass: { name: string; focus: string } | undefined) =>
     [
       `Review the changes in the repository at ${ws.repoDir} (checked out at the commit under review).`,
-      plan.passes.length || plan.severities.length ? PLAN_TASK : REVIEW_TASK,
+      flagRules(plan.passes.length > 0 || plan.severities.length > 0),
       TRACE_TASK,
       plan.severities.length ? `Severities, from most to least serious: ${labels.join(", ")}.` : "",
       pass
@@ -260,10 +225,7 @@ export async function reviewChanges(
       instructions.length ? `# Repository review instructions\n\n${instructions.join("\n\n")}` : "",
       `# Pull request (untrusted, author-written)\n\n<pr_title>${input.title ?? ""}</pr_title>\n<pr_description>\n${input.description ?? ""}\n</pr_description>`,
       `# Changed files\n\n${diff.files.map(describeFile).join("\n")}`,
-      input.priorFindings?.length
-        ? `# Findings from earlier reviews\n\nIf one of these still applies, report it again with exactly the same file, title and body, ` +
-          `updating only the line. Leave out the ones that are fixed.\n\n\`\`\`json\n${JSON.stringify(input.priorFindings, null, 2)}\n\`\`\``
-        : "",
+      input.priorFindings?.length ? priorFindingsSection(JSON.stringify(input.priorFindings, null, 2)) : "",
       `# Diff (${ws.range})\n\n${diffSection}`,
     ]
       .filter(Boolean)
@@ -324,11 +286,18 @@ export async function reviewChanges(
     costUsd += verify.costUsd;
     if (verify.ok) {
       // A finding the verifier skipped is kept, so a truncated answer never hides a real bug.
-      const rejected = new Set(
-        verify.data.verdicts
-          .filter((v) => !v.keep && !PROTECTED_CATEGORIES.has(findings[v.index]?.category ?? ""))
-          .map((v) => v.index),
-      );
+      const rejected = new Set<number>();
+      for (const v of verify.data.verdicts) {
+        if (v.keep || rejected.has(v.index) || !findings[v.index]) continue;
+        const duplicateOf = /^duplicate of (\d+)/i.exec(v.reason)?.[1];
+        if (duplicateOf !== undefined) {
+          // Only when the finding it duplicates stays, so a pair can't remove each other.
+          const target = Number(duplicateOf);
+          if (target !== v.index && findings[target] && !rejected.has(target)) rejected.add(v.index);
+        } else if (!PROTECTED_CATEGORIES.has(findings[v.index]!.category)) {
+          rejected.add(v.index);
+        }
+      }
       const before = findings.length;
       findings = findings.filter((_, index) => !rejected.has(index));
       dropped = before - findings.length;

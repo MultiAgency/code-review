@@ -226,13 +226,14 @@ test("the repo's own rules replace the built-in 'defects only' rule", async () =
     () => ok({ summary: "s", findings: [] }),
   );
   await reviewChanges(await input(prRepo(PASSES_REVIEW_MD)), { agent: withPlan.runner, options });
-  assert.doesNotMatch(withPlan.requests[0]!.prompt, /Do not report style/);
+  assert.doesNotMatch(withPlan.requests[0]!.prompt, /Don't flag style/);
+  assert.match(withPlan.requests[0]!.prompt, /Report what the repository's review instructions below ask for/);
   assert.match(withPlan.requests[0]!.prompt, /Important[\s\S]*Nit/);
 
   const without = scriptedAgent(() => ok({ summary: "s", findings: [] }));
   await reviewChanges(await input(prRepo()), { agent: without.runner, options });
   assert.equal(without.requests.length, 1);
-  assert.match(without.requests[0]!.prompt, /Do not report style/);
+  assert.match(without.requests[0]!.prompt, /Don't flag style/);
 });
 
 test("every pass is told to trace callers, and reports what it checked", async () => {
@@ -254,5 +255,45 @@ test("the verify pass is asked to drop duplicates that different passes describe
   );
   const result = await reviewChanges(await input(r), { agent: runner, options });
   assert.match(requests[1]!.prompt, /same defect[\s\S]*duplicate of/i);
+  assert.equal(result.findings.length, 1);
+});
+
+test("a protected finding can still be dropped as a duplicate, but not otherwise", async () => {
+  const r = prRepo();
+  const { runner } = scriptedAgent(
+    () =>
+      ok({
+        summary: "s",
+        findings: [
+          finding({ title: "Race A", category: "concurrency" }),
+          finding({ title: "Race A, reworded", category: "concurrency", line: 3 }),
+          finding({ title: "Race B", category: "concurrency", line: 3 }),
+        ],
+      }),
+    () =>
+      ok({
+        verdicts: [
+          { index: 1, keep: false, reason: "duplicate of 0" },
+          { index: 2, keep: false, reason: "single-threaded" },
+        ],
+      }),
+  );
+  const result = await reviewChanges(await input(r), { agent: runner, options });
+  assert.deepEqual(result.findings.map((f) => f.title).sort(), ["Race A", "Race B"]);
+});
+
+test("two findings marked duplicates of each other keep one", async () => {
+  const r = prRepo();
+  const { runner } = scriptedAgent(
+    () => ok({ summary: "s", findings: [finding({ title: "One" }), finding({ title: "Two", line: 3 })] }),
+    () =>
+      ok({
+        verdicts: [
+          { index: 0, keep: false, reason: "duplicate of 1" },
+          { index: 1, keep: false, reason: "duplicate of 0" },
+        ],
+      }),
+  );
+  const result = await reviewChanges(await input(r), { agent: runner, options });
   assert.equal(result.findings.length, 1);
 });
