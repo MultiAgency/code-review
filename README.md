@@ -45,8 +45,9 @@ Terms used here and in the code are defined in [GLOSSARY.md](GLOSSARY.md).
      still open from earlier reviews.
    - It's also given `CLAUDE.md` and `REVIEW.md` from the **base branch**, with the files they
      `@import` (repo files only; no symlinks; depth and size limits).
-   - When `REVIEW.md` has a `## Passes` section, each pass runs as its own focused review, in
-     parallel. Findings are merged before verification. Without one, there's a single pass.
+   - When `REVIEW.md` has a `## Passes` section, one review covers every pass it lists. With
+     `REVIEW_SINGLE_PASS=false`, each pass runs as its own focused review instead; findings are
+     merged before verification.
    - When `REVIEW.md` has a `## Severity` section, its labels (e.g. Important / Nit) are used.
      They map onto high / low for inline-comment decisions.
    - Every pass is told to trace the callers of each changed function, and how often each one
@@ -154,7 +155,8 @@ wrong.
 | `REVIEW_VERIFY` | `true` | Run the verify pass |
 | `REVIEW_BUDGET_USD` | `12` | Per review, across all passes (80% review passes, 20% verify) |
 | `REVIEW_MAX_BUDGET_USD` | `10` | Ceiling for any single pass |
-| `REVIEW_MAX_PARALLEL_PASSES` | `2` | Review passes running at once within one review |
+| `REVIEW_SINGLE_PASS` | `true` | One review pass covering every `REVIEW.md` pass. `false` runs one focused pass each (≈2× cost; on our eval it added a few real findings, mostly nits) |
+| `REVIEW_MAX_PARALLEL_PASSES` | `2` | Review passes running at once within one review (multi-pass mode) |
 | `DAILY_BUDGET_USD` | `50` | Reviews stop starting once a UTC day's spend reaches this; they wait for the next day. `0` = no cap |
 | `REVIEW_MAX_TURNS` | `80` | Per pass |
 | `REVIEW_PASS_TIMEOUT_MIN` | `20` | Per pass |

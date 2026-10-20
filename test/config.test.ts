@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { checkServiceConfig, ConfigError, loadConfig } from "../src/config.ts";
+import { checkServiceConfig, ConfigError, loadConfig, reviewOptions } from "../src/config.ts";
 
 test("defaults when nothing is set", () => {
   const c = loadConfig({});
@@ -46,4 +46,9 @@ test("cost limits have safe defaults and 0 turns the daily cap off", () => {
   assert.equal(c.DAILY_BUDGET_USD, 50);
   assert.equal(loadConfig({ DAILY_BUDGET_USD: "0" }).DAILY_BUDGET_USD, 0);
   assert.throws(() => loadConfig({ REVIEW_MAX_PARALLEL_PASSES: "0" }), ConfigError);
+});
+
+test("one review pass is the default; REVIEW_SINGLE_PASS=false runs one per REVIEW.md pass", () => {
+  assert.equal(reviewOptions(loadConfig({})).singlePass, true);
+  assert.equal(reviewOptions(loadConfig({ REVIEW_SINGLE_PASS: "false" })).singlePass, false);
 });

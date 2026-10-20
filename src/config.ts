@@ -36,6 +36,9 @@ const Env = z.object({
   // Cap per agent pass, and per review across all its passes (80% review passes, 20% verify).
   REVIEW_MAX_BUDGET_USD: num(10, (s) => s.positive()),
   REVIEW_BUDGET_USD: num(12, (s) => s.positive()),
+  // One review pass covering every REVIEW.md pass (default: on the near-agencies eval it kept ~90%
+  // of the real findings at half the cost). false = one focused pass per REVIEW.md pass.
+  REVIEW_SINGLE_PASS: bool(true),
   // Review passes running at once per review; each is a Claude Code process.
   REVIEW_MAX_PARALLEL_PASSES: num(2, (s) => s.int().min(1)),
   // Reviews stop starting once this much is spent in a UTC day (estimated at API prices); 0 = no cap.
@@ -123,5 +126,6 @@ export function reviewOptions(config: Config): ReviewOptions {
     inlineDiffChars: config.REVIEW_INLINE_DIFF_CHARS,
     reviewBudgetUsd: config.REVIEW_BUDGET_USD,
     maxParallelPasses: config.REVIEW_MAX_PARALLEL_PASSES,
+    singlePass: config.REVIEW_SINGLE_PASS,
   };
 }

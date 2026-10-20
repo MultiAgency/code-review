@@ -1,6 +1,6 @@
 // Replays PRs whose comments carry `ai-review-ledger` labels and scores our review against them:
 //   node dist/backtest.js --repo owner/name --pr 212 [--pr 94] [--all-rounds] [--out results.json]
-//                         [--parallel 3] [--resume] [--single-pass]
+//                         [--parallel 3] [--resume] [--multi-pass]
 //   node dist/backtest.js --rescore results.json       (score saved results again, no review runs)
 // Matching is judged by an agent (same defect?) unless --line-window N is given.
 // By default only each PR's last labelled commit is replayed (one paid review per PR); --all-rounds
@@ -35,7 +35,7 @@ const { values } = parseArgs({
     rescore: { type: "string" },
     parallel: { type: "string", default: "3" },
     resume: { type: "boolean", default: false },
-    "single-pass": { type: "boolean", default: false },
+    "multi-pass": { type: "boolean", default: false },
   },
 });
 if (!values.rescore && (!values.repo || !values.pr?.length)) {
@@ -81,7 +81,7 @@ type Result = { pr: string; sha: string; expected: EvalCase["expected"]; finding
 const results: Result[] =
   values.resume && values.out ? JSON.parse(await readFile(values.out, "utf8").catch(() => "[]")) : [];
 const done = new Set(results.map((r) => `${r.pr}@${r.sha}`));
-const options = { ...reviewOptions(config), ...(values["single-pass"] ? { singlePass: true } : {}) };
+const options = { ...reviewOptions(config), ...(values["multi-pass"] ? { singlePass: false } : {}) };
 
 // Gather every case first; git fetches and worktree changes share one repo, so they run one at a time.
 const todo: Array<{ pr: string; c: EvalCase; title: string; body: string }> = [];
