@@ -65,3 +65,16 @@ One run each (the first attempt was cut off by the usage limit and resumed with 
 Held-out with the Compliance pass: valid 8/16 (50%), Compliance 7/11 (unchanged), findings on 2 of 5
 clean PRs, $16.24 — worse than the 1-pass baseline (11/16), so rejected. Third tuning gain (after 2
 samples and `xhigh`) that didn't generalise; held-out valid recall stays ~68% across configurations.
+
+Fable 5.1 (`REVIEW_MODEL=claude-fable-5-1`), 1 pass, tuning set 2: valid 26/36 (72%), Important
+20/22, 68 findings, $41.90 — no better than Opus 5.5 (27/36, $10.76) at ~4× cost. Not adopted.
+
+## Where it stands (2026-10-21)
+
+Default (1 pass, Opus 5.5, `high`) is the best measured configuration. Important labels found
+every time on held-out; ≤5% wrong findings; nothing on clean PRs; ~$0.37–0.67/PR; far ahead of
+Private Investigator on the same commits. Valid-label recall plateaus at ~68–75% across 1 vs 3
+passes, prompt variants, `xhigh`, 2 samples, an extra Compliance pass and Fable; the remaining
+held-out misses are a stable set of Compliance and error-path Nits. Next ideas, untested: a
+repo-specific checklist distilled from past ai-review findings (learning from feedback), and a
+larger, multi-repo eval before tuning further.
