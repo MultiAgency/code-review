@@ -314,3 +314,16 @@ test("a saved review is not reused once the PR head has moved", async () => {
   assert.equal(outcome.kind, "done");
   assert.equal(again.requests.length, 1);
 });
+
+test("a retry after the summary failed doesn't post the inline comments again", async () => {
+  const p = pr();
+  const gh = fakeGitHub({ head: p.head, base: p.base, cloneUrl: p.cloneUrl, failCommentWrites: 2 });
+  const first = run();
+  await runReviewJob(job(), deps(gh, scriptedAgent(() => ok({ summary: "s", findings: [bug] })).runner), first);
+  assert.equal(gh.state.reviews.length, 1);
+
+  const outcome = await runReviewJob(job(), deps(gh, scriptedAgent().runner), run(first.saved));
+  assert.equal(outcome.kind, "done");
+  assert.equal(gh.state.reviews.length, 1);
+  assert.equal(parseState(gh.state.comments[0]!.body!)!.findings[0]!.commented, true);
+});

@@ -21,7 +21,8 @@ export interface Publisher {
   started(): Promise<void>;
   /** State remembered from the last review of this PR, if any. */
   prior(): Promise<ReviewState | undefined>;
-  publish(report: ReviewReport): Promise<void>;
+  /** `onPosted` hears each batch of findings commented, so a retry can skip them if a later step fails. */
+  publish(report: ReviewReport, onPosted?: (fingerprints: string[]) => void): Promise<void>;
   failed(reason: FailureReason, prior?: ReviewState): Promise<void>;
   /** The review will run again at `until` (epoch ms), after Claude's usage limit resets. */
   waiting(until: number, prior?: ReviewState): Promise<void>;
@@ -142,7 +143,7 @@ export function githubPublisher(opts: {
       const comment = await findSummary();
       return comment?.body ? parseState(comment.body) : undefined;
     },
-    async publish(report) {
+    async publish(report, onPosted) {
       const posted = new Set<string>();
       const planned = report.inline.length + report.fileComments.length;
       if (planned > 0 && (await headStillInPr(report.headSha))) {
@@ -159,6 +160,7 @@ export function githubPublisher(opts: {
               },
             );
             for (const c of report.inline) posted.add(c.fp);
+            onPosted?.(report.inline.map((c) => c.fp));
           } catch (error) {
             // GitHub rejected a position; those findings go in the summary instead.
             if (!(error instanceof GitHubError && error.status === 422))
@@ -182,6 +184,7 @@ export function githubPublisher(opts: {
               },
             );
             posted.add(c.fp);
+            onPosted?.([c.fp]);
           } catch (error) {
             if (!(error instanceof GitHubError && error.status === 422))
               throw error;

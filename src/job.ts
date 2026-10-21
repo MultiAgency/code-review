@@ -73,6 +73,8 @@ interface SavedReview {
   diffBase: string;
   mode: "full" | "incremental";
   result: ReviewResult;
+  /** Fingerprints already commented on the PR by an attempt whose summary write then failed. */
+  posted?: string[];
 }
 
 /**
@@ -139,13 +141,14 @@ export async function runReviewJob(
       log({ msg: "head already reviewed; reviewing in full" });
     }
 
-    const saved = run.saved as SavedReview | undefined;
-    let result: ReviewResult;
+    let saved = run.saved as SavedReview | undefined;
     if (
-      saved?.headSha === pr.head.sha &&
-      saved.diffBase === diffBase &&
-      saved.mode === mode
-    ) {
+      saved &&
+      !(saved.headSha === pr.head.sha && saved.diffBase === diffBase && saved.mode === mode)
+    )
+      saved = undefined;
+    let result: ReviewResult;
+    if (saved) {
       log({ msg: "publishing the review an earlier attempt finished" });
       result = saved.result;
     } else {
@@ -171,7 +174,8 @@ export async function runReviewJob(
         },
         { agent, options: deps.reviewOptions },
       );
-      run.save({ headSha: pr.head.sha, diffBase, mode, result } satisfies SavedReview);
+      saved = { headSha: pr.head.sha, diffBase, mode, result };
+      run.save(saved);
       signal.throwIfAborted();
       log({
         msg: "review complete",
@@ -188,8 +192,13 @@ export async function runReviewJob(
       ...(prior ? { prior } : {}),
       maxInline: deps.maxInline,
       trigger: deps.trigger,
+      ...(saved.posted ? { alreadyPosted: saved.posted } : {}),
     });
-    await publisher.publish(report);
+    const keep = saved;
+    await publisher.publish(report, (fps) => {
+      keep.posted = [...(keep.posted ?? []), ...fps];
+      run.save(keep);
+    });
     return { kind: "done", costUsd: spent };
   } catch (error) {
     if (outer.aborted) throw error;

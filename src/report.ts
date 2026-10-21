@@ -131,10 +131,15 @@ export function buildReport(
     maxInline: number;
     /** The configured trigger phrase, which the summary invites people to comment. */
     trigger: string;
+    /** Fingerprints an earlier attempt already commented, before its summary write failed. */
+    alreadyPosted?: readonly string[];
   },
 ): ReviewReport {
   const trigger = clean(ctx.trigger);
   const priorByFp = new Map((ctx.prior?.findings ?? []).map((f) => [f.fp, f]));
+  const alreadyPosted = new Set(ctx.alreadyPosted);
+  const commentedBefore = (fp: string) =>
+    priorByFp.get(fp)?.commented === true || alreadyPosted.has(fp);
   const current = result.findings.map((f) => ({
     ...f,
     fp: fingerprint(f.file, f.title),
@@ -144,7 +149,7 @@ export function buildReport(
   const inline: PlannedComment[] = [];
   const fileComments: PlannedComment[] = [];
   for (const f of current) {
-    if (f.severity === "low" || priorByFp.get(f.fp)?.commented) continue;
+    if (f.severity === "low" || commentedBefore(f.fp)) continue;
     if (f.placement.kind === "lines" && inline.length < ctx.maxInline) {
       inline.push({
         fp: f.fp,
@@ -195,7 +200,7 @@ export function buildReport(
             stored(
               f,
               "open",
-              posted.has(f.fp) || priorByFp.get(f.fp)?.commented === true,
+              posted.has(f.fp) || commentedBefore(f.fp),
             ),
           ),
           ...stillOpen,
@@ -203,7 +208,7 @@ export function buildReport(
         ],
       };
       const notCommented = current.filter(
-        (f) => !posted.has(f.fp) && !priorByFp.get(f.fp)?.commented,
+        (f) => !posted.has(f.fp) && !commentedBefore(f.fp),
       );
       const head = [
         SUMMARY_MARKER,
@@ -221,7 +226,7 @@ export function buildReport(
         "",
         countsLine(
           current.length,
-          posted.size,
+          current.filter((f) => posted.has(f.fp) || alreadyPosted.has(f.fp)).length,
           stillOpen.length,
           resolved.length,
           result.dropped,
