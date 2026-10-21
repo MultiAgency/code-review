@@ -327,3 +327,22 @@ test("a retry after the summary failed doesn't post the inline comments again", 
   assert.equal(gh.state.reviews.length, 1);
   assert.equal(parseState(gh.state.comments[0]!.body!)!.findings[0]!.commented, true);
 });
+
+test("a review cut short during verify by a shutdown is not saved for the restarted job", async () => {
+  const p = pr();
+  const gh = fakeGitHub({ head: p.head, base: p.base, cloneUrl: p.cloneUrl });
+  const shutdown = new AbortController();
+  const r = run();
+  r.signal = shutdown.signal;
+  const agent = scriptedAgent(
+    () => ok({ summary: "s", findings: [bug] }),
+    () => {
+      shutdown.abort(new Error("shutdown"));
+      return { ok: false, failure: "aborted", detail: "", costUsd: 0.1 };
+    },
+  );
+  const withVerify = { ...deps(gh, agent.runner), reviewOptions: { verify: true, inlineDiffChars: 100_000 } };
+  await assert.rejects(runReviewJob(job(), withVerify, r));
+  assert.equal(r.saved, undefined);
+  assert.equal(r.spent, 0.2);
+});

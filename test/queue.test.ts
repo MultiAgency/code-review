@@ -269,3 +269,26 @@ test("a job waiting for Claude's usage limit runs again at the reset time, witho
   assert.equal(attempts.length, 3);
   await q.close(0);
 });
+
+test("a job superseded while it reports waiting is not queued again", async () => {
+  const runs: string[] = [];
+  let q!: ReturnType<typeof openReviewQueue>;
+  q = openReviewQueue(
+    async (j) => {
+      runs.push(j.reason);
+      // Only the first run asks to wait; a buggy re-run of the old job finishes, so the test ends.
+      if (j.reason === "opened" && runs.length === 1) {
+        q.submit(job(1, { reason: "comment" }), "newer");
+        return { kind: "waiting", until: 0, costUsd: 0 };
+      }
+      return done;
+    },
+    { ...fast, concurrency: 2, dbPath: ":memory:" },
+  );
+  q.submit(job(1), "older");
+  await settle();
+  await q.whenIdle();
+  await settle();
+  assert.deepEqual(runs, ["opened", "comment"]);
+  await q.close(0);
+});

@@ -175,8 +175,9 @@ export async function runReviewJob(
         { agent, options: deps.reviewOptions },
       );
       saved = { headSha: pr.head.sha, diffBase, mode, result };
-      run.save(saved);
+      // A review cut short (e.g. its verify pass, by a shutdown) is not one to reuse.
       signal.throwIfAborted();
+      run.save(saved);
       log({
         msg: "review complete",
         findings: result.findings.length,

@@ -269,7 +269,8 @@ export class ReviewQueue {
         const outcome = await this.work(job, run);
         this.log({ pr, msg: "job finished", attempt, ...outcome });
         if (outcome.kind === "waiting") {
-          this.store.requeueInterrupted(id, outcome.until);
+          // Unless a newer request superseded it meanwhile.
+          if (this.store.status(id) === "running") this.store.requeueInterrupted(id, outcome.until);
           return;
         }
         if (outcome.kind === "failed") {
