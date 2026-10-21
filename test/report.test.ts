@@ -261,7 +261,7 @@ test("comments and summary use the repo's pass and severity names, and say what 
   assert.match(summary, /🟡 Compliance · Nit `src\/a\.ts:2` \*\*No test\*\*/);
   assert.match(
     summary,
-    /Checked: finishAutoJob and settleAutoJobs; settleSourceClaim/,
+    /<details><summary>What was checked \(2 areas\)<\/summary>\n\n- finishAutoJob and settleAutoJobs\n- settleSourceClaim\n\n<\/details>/,
   );
 });
 
@@ -311,4 +311,16 @@ test("plain text lists every finding without markers, state or markdown", () => 
   assert.match(text, /🟡 Low · correctness  src\/a\.ts:2  Style\n    Line one\.\n    Line two \[31mred/);
   assert.match(text, /Still open from earlier reviews\n  🟠 Medium  src\/b\.ts:9  Old bug/);
   assert.match(text, /Skipped 2 file\(s\)/);
+});
+
+test("plain text says how much was checked, and lists it only when asked", () => {
+  const report = buildReport(result([f()], { checked: ["callers of average()", "empty arrays"] }), {
+    headSha: HEAD,
+    mode: "full",
+    trigger: "@private-review",
+    maxInline: 0,
+  });
+  assert.match(report.renderText(), /\nChecked 2 areas\.$/);
+  assert.doesNotMatch(report.renderText(), /callers of average/);
+  assert.match(report.renderText({ verbose: true }), /\nChecked:\n  - callers of average\(\)\n  - empty arrays$/);
 });

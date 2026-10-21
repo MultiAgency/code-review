@@ -215,7 +215,7 @@ docker run -p 8080:8080 -v pr-review-data:/data --env-file .env claude-pr-review
 
 ```sh
 npm ci && npm run build
-CLAUDE_CODE_OAUTH_TOKEN=... node dist/cli.js --repo ../my-repo --base origin/main [--head HEAD] [--json]
+CLAUDE_CODE_OAUTH_TOKEN=... node dist/cli.js --repo ../my-repo --base origin/main [--head HEAD] [--json] [--verbose]
 ```
 
 - **What it reviews:** the committed `--head`, checked out into its own worktree. Uncommitted

@@ -1,4 +1,4 @@
-// Review a local checkout: `node dist/cli.js [--repo .] [--base origin/main] [--head HEAD] [--json]`
+// Review a local checkout: `node dist/cli.js [--repo .] [--base origin/main] [--head HEAD] [--json] [--verbose]`
 // Prints the review; never posts anywhere. Exits 2 when a high-severity finding is reported.
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
@@ -14,6 +14,8 @@ const { values } = parseArgs({
     base: { type: "string", default: "origin/main" },
     head: { type: "string", default: "HEAD" },
     json: { type: "boolean", default: false },
+    // List what the review checked, not just how much.
+    verbose: { type: "boolean", default: false },
   },
 });
 
@@ -41,6 +43,10 @@ const report = buildReport(result, {
   maxInline: 0,
   trigger: config.REVIEW_TRIGGER,
 });
-console.log(values.json ? JSON.stringify(result, null, 2) : report.renderText());
+console.log(
+  values.json
+    ? JSON.stringify(result, null, 2)
+    : report.renderText({ verbose: values.verbose }),
+);
 process.exitCode = result.findings.some((f) => f.severity === "high") ? 2 : 0;
 

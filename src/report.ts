@@ -45,8 +45,11 @@ export interface ReviewReport {
   reviewBody: string;
   /** The summary comment, given which planned comments actually got posted. */
   renderSummary(posted: ReadonlySet<string>): string;
-  /** Every finding as plain text, for a terminal or a log: no markdown, markers or state. */
-  renderText(): string;
+  /**
+   * Every finding as plain text, for a terminal or a log: no markdown, markers
+   * or state. What was checked is a count unless `verbose`.
+   */
+  renderText(options?: { verbose?: boolean }): string;
 }
 
 export type FailureReason =
@@ -233,11 +236,18 @@ export function buildReport(
           true,
         ),
       );
-      if (result.checked.length)
+      // What the review looked at, for telling "found nothing" from "didn't look"; folded away.
+      if (result.checked.length) {
+        const items = checkedItems(result.checked, clean);
         head.push(
           "",
-          `_Checked: ${clean(result.checked.join("; ")).slice(0, 1500)}_`,
+          `<details><summary>What was checked (${areas(result.checked.length)})</summary>`,
+          "",
+          ...items.map((item) => `- ${item}`),
+          "",
+          "</details>",
         );
+      }
       const footer = [
         "",
         `<sub>${result.skipped ? `${skippedText(result.skipped)} ` : ""}` +
@@ -274,7 +284,7 @@ export function buildReport(
       }
       return fit(head, sections, footer);
     },
-    renderText() {
+    renderText(options = {}) {
       const lines = [
         `Claude review · ${ctx.headSha.slice(0, 7)}${ctx.mode === "incremental" ? ` (changes since ${ctx.prior!.head.slice(0, 7)})` : ""}`,
       ];
@@ -316,11 +326,36 @@ export function buildReport(
         for (const f of resolved) lines.push(`  ✅ ${f.file}  ${plain(f.title)}`);
       }
       if (result.checked.length)
-        lines.push("", `Checked: ${plain(result.checked.join("; ")).slice(0, 1500)}`);
+        lines.push(
+          "",
+          options.verbose
+            ? ["Checked:", ...checkedItems(result.checked, plain).map((item) => `  - ${item}`)].join("\n")
+            : `Checked ${areas(result.checked.length)}.`,
+        );
       if (result.skipped) lines.push("", skippedText(result.skipped));
       return lines.join("\n");
     },
   };
+}
+
+function areas(n: number): string {
+  return n === 1 ? "1 area" : `${n} areas`;
+}
+
+/** The checked list, each item escaped, cut off once it passes 1500 characters in all. */
+function checkedItems(checked: string[], escape: (text: string) => string): string[] {
+  const items: string[] = [];
+  let length = 0;
+  for (const raw of checked) {
+    const item = escape(raw).replace(/\s+/g, " ").trim();
+    if (length + item.length > 1500) {
+      items.push(`…and ${checked.length - items.length} more`);
+      break;
+    }
+    items.push(item);
+    length += item.length;
+  }
+  return items;
 }
 
 function skippedText(skipped: number): string {
