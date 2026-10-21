@@ -4,6 +4,10 @@
 // A container stops once its Durable Object has been inactive for the inactivity timeout, and its
 // disk is ephemeral. Reviews keep running after the webhook is answered, so an alarm checks the
 // service's queue while it is busy and keeps the container up until nothing is running or queued.
+//
+// The container gets its settings and secrets when it starts, and a deploy that keeps the image
+// doesn't restart it. So the settings it started with are remembered, and once they are out of date
+// the container is restarted the next time it is idle; a review in progress is never cut off.
 import { DurableObject } from "cloudflare:workers";
 
 interface Env {
@@ -25,7 +29,13 @@ export default {
       (request.method === "POST" && pathname === "/webhook") ||
       (request.method === "GET" && pathname === "/healthz");
     if (!allowed) return new Response("Not found", { status: 404 });
-    return env.REVIEWER.get(env.REVIEWER.idFromName("main")).fetch(request);
+    try {
+      return await env.REVIEWER.get(env.REVIEWER.idFromName("main")).fetch(request);
+    } catch (error) {
+      // The health check says why the service is unavailable; webhooks just get a 503.
+      const detail = pathname === "/healthz" ? { error: String(error) } : {};
+      return Response.json({ ok: false, ...detail }, { status: 503 });
+    }
   },
 };
 
@@ -33,6 +43,8 @@ export class Reviewer extends DurableObject<Env> {
   private starting: Promise<void> | undefined;
 
   async fetch(request: Request): Promise<Response> {
+    if (this.container().running && (await this.outdated()) && (await this.idle()) === true)
+      await this.stop();
     this.starting ??= this.startAndWaitForPort().finally(() => {
       this.starting = undefined;
     });
@@ -47,39 +59,73 @@ export class Reviewer extends DurableObject<Env> {
     return this.container().getTcpPort(PORT).fetch(forwarded);
   }
 
-  /** Keeps the container alive while the service has reviews running or queued. */
+  /**
+   * Keeps the container alive while the service has reviews running or queued
+   * (or can't say), and restarts it on new settings once it is idle.
+   */
   async alarm(): Promise<void> {
-    const container = this.container();
-    if (!container.running) return;
-    try {
-      const res = await container.getTcpPort(PORT).fetch("http://container/healthz", {
-        signal: AbortSignal.timeout(5_000),
-      });
-      const stats = (await res.json()) as { running?: number; queued?: number };
-      if ((stats.running ?? 0) + (stats.queued ?? 0) > 0)
-        await this.ctx.storage.setAlarm(Date.now() + BUSY_CHECK_MS);
-    } catch {
-      // Unhealthy or restarting: check again rather than let a review be cut off.
-      await this.ctx.storage.setAlarm(Date.now() + BUSY_CHECK_MS);
+    if (!this.container().running) return;
+    const idle = await this.idle();
+    if (idle === true) {
+      if (await this.outdated()) await this.stop();
+      return;
     }
+    await this.ctx.storage.setAlarm(Date.now() + BUSY_CHECK_MS);
   }
 
   private container() {
     return this.ctx.container!;
   }
 
+  /** The settings and secrets the container is given: every string binding. */
+  private containerEnv(): Record<string, string> {
+    const env: Record<string, string> = {};
+    for (const [name, value] of Object.entries(this.env)) if (typeof value === "string") env[name] = value;
+    return env;
+  }
+
+  /** A hash of the container's settings, so a change can be noticed without storing secrets. */
+  private async settingsVersion(): Promise<string> {
+    const env = this.containerEnv();
+    const text = JSON.stringify(Object.keys(env).sort().map((k) => [k, env[k]]));
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+    return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  }
+
+  private async outdated(): Promise<boolean> {
+    return (await this.ctx.storage.get<string>("settings")) !== (await this.settingsVersion());
+  }
+
+  /** True when nothing is running or queued; undefined when the service doesn't answer. */
+  private async idle(): Promise<boolean | undefined> {
+    try {
+      const res = await this.container().getTcpPort(PORT).fetch("http://container/healthz", {
+        signal: AbortSignal.timeout(5_000),
+      });
+      const stats = (await res.json()) as { running?: number; queued?: number };
+      return (stats.running ?? 0) + (stats.queued ?? 0) === 0;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private async stop(): Promise<void> {
+    const container = this.container();
+    const exited = container.monitor().catch(() => {});
+    await container.destroy("settings changed");
+    await Promise.race([exited, scheduler.wait(10_000)]);
+  }
+
   private async startAndWaitForPort(): Promise<void> {
     const container = this.container();
     if (!container.running) {
-      const env: Record<string, string> = {};
-      for (const [name, value] of Object.entries(this.env))
-        if (typeof value === "string") env[name] = value;
       container.start({
         image: container.images.base,
         instance: INSTANCE,
         enableInternet: true,
-        env,
+        env: this.containerEnv(),
       });
+      await this.ctx.storage.put("settings", await this.settingsVersion());
     }
     await container.setInactivityTimeout(INACTIVITY_TIMEOUT_MS);
 

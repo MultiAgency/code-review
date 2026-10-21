@@ -34,6 +34,7 @@ export default defineConfig({
       REVIEW_MODEL: bindings.text("claude-opus-5-5"),
       // Leave the platform's stop signal time to finish or requeue running reviews.
       SHUTDOWN_GRACE_SECONDS: bindings.text("25"),
+      SETTINGS_PROBE: bindings.text("1"),
     },
   },
   containers: [reviewer],
