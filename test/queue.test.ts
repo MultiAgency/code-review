@@ -25,7 +25,7 @@ function controlled() {
   }> = [];
   let active = 0;
   let peak = 0;
-  const work: Work = (j, signal) =>
+  const work: Work = (j, { signal }) =>
     new Promise((resolve, reject) => {
       active++;
       peak = Math.max(peak, active);
@@ -160,7 +160,11 @@ test("a daily spend cap holds further jobs until the next UTC day", async () => 
   let clock = Date.parse("2026-10-21T10:00:00Z");
   const seen: number[] = [];
   const q = openReviewQueue(
-    async (j) => (seen.push(j.prNumber), { kind: "done", costUsd: 5 }),
+    async (j, run) => {
+      seen.push(j.prNumber);
+      run.recordSpend(5);
+      return done;
+    },
     {
       ...fast,
       concurrency: 1,
@@ -186,16 +190,11 @@ test("a daily spend cap holds further jobs until the next UTC day", async () => 
 test("failed jobs count toward the daily cap too", async () => {
   const seen: number[] = [];
   const q = openReviewQueue(
-    async (j) => (
-      seen.push(j.prNumber),
-      {
-        kind: "failed",
-        reason: "budget",
-        transient: false,
-        error: "x",
-        costUsd: 9,
-      }
-    ),
+    async (j, run) => {
+      seen.push(j.prNumber);
+      run.recordSpend(9);
+      return { kind: "failed", reason: "budget", transient: false, error: "x" };
+    },
     { ...fast, dbPath: ":memory:", dailyBudgetUsd: 8, concurrency: 1 },
   );
   q.submit(job(1), "a");
@@ -203,5 +202,70 @@ test("failed jobs count toward the daily cap too", async () => {
   await settle();
   await settle();
   assert.deepEqual(seen, [1]);
+  await q.close(0);
+});
+
+test("spend recorded by a job that is then superseded still counts", async () => {
+  const seen: number[] = [];
+  const q = openReviewQueue(
+    (j, run) =>
+      new Promise((_, reject) => {
+        seen.push(j.prNumber);
+        run.recordSpend(9);
+        run.signal.addEventListener("abort", () => reject(run.signal.reason));
+      }),
+    { ...fast, dbPath: ":memory:", dailyBudgetUsd: 8 },
+  );
+  q.submit(job(1), "a");
+  await settle();
+  q.submit(job(1, { reason: "comment" }), "b");
+  await settle();
+  await settle();
+  // The newer request waits: the superseded review already spent today's budget.
+  assert.deepEqual(seen, [1]);
+  assert.equal(q.stats().queued, 1);
+  await q.close(0);
+});
+
+test("what a job saves is handed to its retry", async () => {
+  const saw: unknown[] = [];
+  const q = openReviewQueue(
+    async (_j, run) => {
+      saw.push(run.saved);
+      if (run.saved === undefined) {
+        run.save({ review: "finished" });
+        return { kind: "failed", reason: "github", transient: true, error: "502" };
+      }
+      return done;
+    },
+    { ...fast, dbPath: ":memory:" },
+  );
+  q.submit(job(1), "a");
+  await q.whenIdle();
+  assert.deepEqual(saw, [undefined, { review: "finished" }]);
+  await q.close(0);
+});
+
+test("a job waiting for Claude's usage limit runs again at the reset time, without using up an attempt", async () => {
+  let clock = 1_000;
+  const attempts: number[] = [];
+  const q = openReviewQueue(
+    async () => {
+      attempts.push(clock);
+      return attempts.length < 3 ? { kind: "waiting", until: clock + 10_000, costUsd: 0 } : done;
+    },
+    { ...fast, maxAttempts: 1, dbPath: ":memory:", now: () => clock },
+  );
+  q.submit(job(1), "a");
+  await settle();
+  assert.equal(attempts.length, 1);
+  clock += 5_000;
+  await settle();
+  assert.equal(attempts.length, 1);
+  clock += 5_000;
+  await settle();
+  clock += 10_000;
+  await q.whenIdle();
+  assert.equal(attempts.length, 3);
   await q.close(0);
 });

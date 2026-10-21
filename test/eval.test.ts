@@ -141,3 +141,18 @@ test("judged scoring ignores a judge answer outside the candidate list", async (
   );
   assert.equal(s.hits.length, 0);
 });
+
+test("a judge that can't answer leaves the case unjudged, out of recall, not a miss", async () => {
+  const s = await judgedScore(
+    [F("F1", "a", 1, "open"), F("F2", "b", 1, "open")],
+    [
+      { file: "a", line: 1, title: "x" },
+      { file: "b", line: 1, title: "y" },
+    ],
+    { match: async (e) => (e.id === "F1" ? 0 : "unjudged") },
+  );
+  assert.deepEqual(
+    [s.hits.length, s.misses.length, s.unjudged.map((u) => u.id), s.recall],
+    [1, 0, ["F2"], 1],
+  );
+});

@@ -1,6 +1,10 @@
-import { createHash } from "node:crypto";
 import { redactSecrets } from "./env.js";
-import type { Finding, PriorFinding, ReviewResult } from "./review.js";
+import {
+  fingerprint,
+  type Finding,
+  type PriorFinding,
+  type ReviewResult,
+} from "./review.js";
 
 /** What the summary comment remembers between reviews. */
 export interface ReviewState {
@@ -41,10 +45,15 @@ export interface ReviewReport {
   reviewBody: string;
   /** The summary comment, given which planned comments actually got posted. */
   renderSummary(posted: ReadonlySet<string>): string;
+  /** Every finding as plain text, for a terminal or a log: no markdown, markers or state. */
+  renderText(): string;
 }
 
 export type FailureReason =
   | "usage_limit"
+  | "auth"
+  | "overloaded"
+  | "too_large"
   | "budget"
   | "timeout"
   | "bad_output"
@@ -54,7 +63,10 @@ export type FailureReason =
   | "unknown";
 
 const FAILURE_TEXT: Record<FailureReason, string> = {
-  usage_limit: "Claude's usage limit was reached, or its token was rejected.",
+  usage_limit: "Claude's usage limit was reached.",
+  auth: "Claude rejected its token (expired or revoked).",
+  overloaded: "Claude's API was overloaded.",
+  too_large: "This PR is too large to review in one pass.",
   budget: "The review hit its spending or turn limit.",
   timeout: "The review took too long and was stopped.",
   bad_output: "Claude didn't return a usable review.",
@@ -81,17 +93,6 @@ function badge(f: Pick<Finding, "severity" | "pass" | "label">): string {
   return names.length
     ? `${ICON[f.severity]} ${names.join(" · ")}`
     : SEVERITY[f.severity];
-}
-
-export function fingerprint(file: string, title: string): string {
-  const norm = title
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, " ")
-    .trim();
-  return createHash("sha256")
-    .update(`${file}\0${norm}`)
-    .digest("hex")
-    .slice(0, 16);
 }
 
 export function parseState(body: string): ReviewState | undefined {
@@ -128,8 +129,11 @@ export function buildReport(
     mode: "full" | "incremental";
     prior?: ReviewState;
     maxInline: number;
+    /** The configured trigger phrase, which the summary invites people to comment. */
+    trigger: string;
   },
 ): ReviewReport {
+  const trigger = clean(ctx.trigger);
   const priorByFp = new Map((ctx.prior?.findings ?? []).map((f) => [f.fp, f]));
   const current = result.findings.map((f) => ({
     ...f,
@@ -221,6 +225,7 @@ export function buildReport(
           stillOpen.length,
           resolved.length,
           result.dropped,
+          true,
         ),
       );
       if (result.checked.length)
@@ -230,8 +235,8 @@ export function buildReport(
         );
       const footer = [
         "",
-        `<sub>${result.skipped ? `Skipped ${result.skipped} file(s): lockfiles, build output or vendored code. ` : ""}` +
-          "Comment `@private-review` to re-review new commits, or `@private-review full` for a full review.</sub>",
+        `<sub>${result.skipped ? `${skippedText(result.skipped)} ` : ""}` +
+          `Comment \`${trigger}\` to re-review new commits, or \`${trigger} full\` for a full review.</sub>`,
         `${STATE_PREFIX}${encodeState(state)} -->`,
       ];
       const sections: string[][] = [];
@@ -264,19 +269,85 @@ export function buildReport(
       }
       return fit(head, sections, footer);
     },
+    renderText() {
+      const lines = [
+        `Claude review · ${ctx.headSha.slice(0, 7)}${ctx.mode === "incremental" ? ` (changes since ${ctx.prior!.head.slice(0, 7)})` : ""}`,
+      ];
+      if (result.verification === "unverified")
+        lines.push(
+          "Verification didn't complete, so these findings were not double-checked.",
+        );
+      lines.push(
+        "",
+        plain(result.summary),
+        "",
+        countsLine(
+          current.length,
+          0,
+          stillOpen.length,
+          resolved.length,
+          result.dropped,
+          false,
+        ),
+      );
+      const indent = (text: string) => plain(text).replace(/\n/g, "\n    ");
+      if (current.length) {
+        lines.push("", "Findings");
+        for (const f of current) {
+          const heading =
+            f.pass || f.label ? badge(f) : `${SEVERITY[f.severity]} · ${f.category}`;
+          lines.push(`  ${plain(heading)}  ${f.file}:${f.line}  ${plain(f.title)}`);
+          if (f.body) lines.push(`    ${indent(f.body)}`);
+          if (f.suggestion) lines.push(`    Suggested fix: ${indent(f.suggestion)}`);
+        }
+      }
+      if (stillOpen.length) {
+        lines.push("", "Still open from earlier reviews");
+        for (const f of stillOpen)
+          lines.push(`  ${SEVERITY[f.severity]}  ${f.file}:${f.line}  ${plain(f.title)}`);
+      }
+      if (resolved.length) {
+        lines.push("", "Resolved since the last review");
+        for (const f of resolved) lines.push(`  ✅ ${f.file}  ${plain(f.title)}`);
+      }
+      if (result.checked.length)
+        lines.push("", `Checked: ${plain(result.checked.join("; ")).slice(0, 1500)}`);
+      if (result.skipped) lines.push("", skippedText(result.skipped));
+      return lines.join("\n");
+    },
   };
+}
+
+function skippedText(skipped: number): string {
+  return `Skipped ${skipped} file(s): lockfiles, build output or vendored code.`;
 }
 
 /** Summary comment for a review that failed; keeps the earlier state so nothing is lost. */
 export function renderFailure(
   reason: FailureReason,
-  prior?: ReviewState,
+  ctx: { trigger: string; prior?: ReviewState | undefined },
 ): string {
+  return statusComment(
+    `😕 The review failed: ${FAILURE_TEXT[reason]} Comment \`${clean(ctx.trigger)}\` to retry.`,
+    ctx.prior,
+  );
+}
+
+/** Summary comment for a review waiting for Claude's usage limit to reset. */
+export function renderWaiting(until: number, prior?: ReviewState): string {
+  const at = new Date(until).toISOString().slice(11, 16);
+  return statusComment(
+    `⏳ ${FAILURE_TEXT.usage_limit} The review will run again after it resets, at about ${at} UTC.`,
+    prior,
+  );
+}
+
+function statusComment(line: string, prior: ReviewState | undefined): string {
   return [
     SUMMARY_MARKER,
     "### Claude review",
     "",
-    `😕 The review failed: ${FAILURE_TEXT[reason]} Comment \`@private-review\` to retry.`,
+    line,
     ...(prior
       ? [
           "",
@@ -321,11 +392,13 @@ function countsLine(
   open: number,
   resolved: number,
   dropped: number,
+  markdown: boolean,
 ): string {
+  const issues = markdown ? `**${found} issue(s)**` : `${found} issue(s)`;
   const parts = [
     found === 0
       ? "No new issues found"
-      : `**${found} issue(s)**${posted ? ` (${posted} commented inline)` : ""}`,
+      : `${issues}${posted ? ` (${posted} commented inline)` : ""}`,
   ];
   if (open) parts.push(`${open} still open from earlier`);
   if (resolved) parts.push(`${resolved} resolved`);
@@ -378,6 +451,11 @@ function clean(text: string): string {
   return redactSecrets(text)
     .replace(/```\s*suggestion/gi, "```text")
     .replace(/<!--/g, "&lt;!--");
+}
+
+/** Model-written text for a terminal or log: secrets redacted, control characters removed. */
+function plain(text: string): string {
+  return redactSecrets(text).replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, "");
 }
 
 /**

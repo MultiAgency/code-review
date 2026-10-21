@@ -10,7 +10,8 @@ finding only with proof from the code; findings it can't check are kept and labe
 
 **Fingerprint**: a stable hash of a finding's path and normalised title, used to recognise the same
 finding across reviews so it is never posted twice. The review pass is told to repeat earlier
-findings word-for-word, which keeps titles stable.
+findings word-for-word, which keeps titles stable. Findings that share one are merged, keeping the
+most severe.
 
 **PR workspace**: the shallow checkout of a PR plus everything a review needs from git: the repo
 directory, the instructions ref, the diff, the changed files and the reviewed head commit.
@@ -18,7 +19,9 @@ directory, the instructions ref, the diff, the changed files and the reviewed he
 **Instructions ref**: the commit `CLAUDE.md` / `REVIEW.md` are read from: the base branch, never the PR.
 
 **Agent runner**: runs one agent pass (prompt, output schema, readable roots) and returns parsed data
-or a typed failure, plus cost.
+or a typed failure, plus cost. Failures are typed: a usage limit (with its reset time when Claude
+reports one), a rejected token, an overloaded API, a prompt too large for Claude's context, a
+spend/turn/time limit, bad output, or a crash (with the end of Claude Code's stderr).
 
 **Review report**: the rendered result of a review: the summary comment body and the inline comments,
 redacted and size-limited. Pure; knows nothing about GitHub transport.
@@ -30,7 +33,11 @@ hidden markers for the reviewed head and the fingerprints of posted findings.
 reactions) or a log (dry run).
 
 **Review job**: one queued request to review a PR, from an automatic trigger or a trigger phrase.
-Persisted until it finishes.
+Persisted until it finishes, with a finished review saved so a retry only re-posts it. It ends done,
+skipped, failed, or waiting (for Claude's usage limit to reset; queued again for then).
+
+**Job run**: what the queue hands a running review job: its abort signal, a spend meter that records
+each Claude run's cost as it finishes, and a slot to save data for the job's retries.
 
 **Trigger phrase**: the PR comment line (`@private-review`, or `@private-review full`) that requests
 a review. Only owners, members and collaborators can use it.

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
@@ -13,7 +14,7 @@ import {
   type Pass,
   type Severity,
 } from "./review-plan.js";
-import type { ChangedFile, Workspace } from "./workspace.js";
+import type { Workspace } from "./workspace.js";
 
 export type { Placement } from "./placement.js";
 
@@ -175,6 +176,8 @@ export class ReviewFailedError extends Error {
     readonly failure: AgentFailureKind,
     readonly costUsd: number,
     detail: string,
+    /** For a usage limit: when it resets (epoch ms), if known. */
+    readonly retryAt?: number,
   ) {
     super(`review pass failed (${failure}): ${detail}`);
   }
@@ -207,19 +210,14 @@ export async function reviewChanges(
   const promptFor = (pass: Pass | undefined) =>
     reviewPrompt({
       repoDir: ws.repoDir,
-      repoDefinesWhatToReport: plan.passes.length > 0 || plan.severities.length > 0,
-      severityLabels: plan.severities,
-      instructions: instructionFiles.map((i) => `## ${i.name} (from the base branch)\n\n${i.text}`),
+      plan,
+      instructions: instructionFiles,
       ...(input.title !== undefined ? { title: input.title } : {}),
       ...(input.description !== undefined ? { description: input.description } : {}),
-      changedFiles: diff.files.map(describeFile),
-      ...(input.priorFindings?.length ? { priorFindingsJson: JSON.stringify(input.priorFindings, null, 2) } : {}),
+      changedFiles: diff.files,
+      ...(input.priorFindings ? { priorFindings: input.priorFindings } : {}),
       range: ws.range,
-      diffSection:
-        diff.text.length <= options.inlineDiffChars
-          ? `\`\`\`diff\n${diff.text}\n\`\`\``
-          : `The diff is large (${diff.text.length} characters). Read it from ${diffPath} in chunks.`,
-      allPasses: plan.passes.map((p) => p.name),
+      diff: { text: diff.text, path: diffPath, inlineChars: options.inlineDiffChars },
       ...(pass ? { pass } : {}),
     });
 
@@ -235,7 +233,7 @@ export async function reviewChanges(
   );
   let costUsd = runs.reduce((sum, r) => sum + r.costUsd, 0);
   const failed = runs.find((r) => !r.ok);
-  if (failed && !failed.ok) throw new ReviewFailedError(failed.failure, costUsd, failed.detail);
+  if (failed && !failed.ok) throw new ReviewFailedError(failed.failure, costUsd, failed.detail, failed.retryAt);
 
   const merged = mergeRuns(
     runs.map((r) => (r.ok ? r.data : undefined)),
@@ -251,11 +249,7 @@ export async function reviewChanges(
   let verification: Verification = "skipped";
   if (options.verify && findings.length > 0) {
     const verify = await agent.run({
-      prompt: verifyPrompt({
-        repoDir: ws.repoDir,
-        diffPath,
-        findingsJson: JSON.stringify(findings.map((f, index) => ({ index, ...f })), null, 2),
-      }),
+      prompt: verifyPrompt({ repoDir: ws.repoDir, diffPath, findings }),
       schema: VerifyOutput,
       roots,
       signal: input.signal,
@@ -284,10 +278,9 @@ export async function reviewChanges(
       : undefined;
     placed.push({ ...f, placement: place(f, text, diff.commentable.get(f.file), changed.has(f.file)) });
   }
-  const order = { high: 0, medium: 1, low: 2 };
   return {
     summary: merged.summaries.join("\n\n"),
-    findings: placed.sort((a, b) => order[a.severity] - order[b.severity]),
+    findings: placed.sort((a, b) => RANK[a.severity] - RANK[b.severity]),
     dropped,
     skipped: diff.skipped.length,
     checked: merged.checked,
@@ -298,10 +291,28 @@ export async function reviewChanges(
 
 type RunOutput = z.infer<ReturnType<typeof reviewOutput>>;
 
+const RANK: Record<Severity, number> = { high: 0, medium: 1, low: 2 };
+
 /**
- * Merges the runs' findings, keeping the first report of a finding that
- * several passes or samples found (exact duplicates; the verify pass removes
- * reworded ones). With a combined pass, its summary speaks for the review.
+ * A stable id for a finding: its file and normalised title. The same finding
+ * keeps it across reviews, which is how it is never posted twice.
+ */
+export function fingerprint(file: string, title: string): string {
+  const norm = title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+  return createHash("sha256")
+    .update(`${file}\0${norm}`)
+    .digest("hex")
+    .slice(0, 16);
+}
+
+/**
+ * Merges the runs' findings so each fingerprint appears once (several passes or
+ * samples found it, or one run repeated it), keeping its most severe report;
+ * the verify pass removes reworded duplicates. With a combined pass, its
+ * summary speaks for the review.
  */
 function mergeRuns(
   outputs: Array<RunOutput | undefined>,
@@ -310,7 +321,7 @@ function mergeRuns(
   labels: [string, ...string[]],
   repoDir: string,
 ): { findings: Array<Omit<Finding, "placement">>; summaries: string[]; checked: string[] } {
-  const seenIn = new Map<string, number>();
+  const seen = new Map<string, number>();
   const findings: Array<Omit<Finding, "placement">> = [];
   const summaries: string[] = [];
   const checked: string[] = [];
@@ -325,17 +336,21 @@ function mergeRuns(
     for (const item of data.checked ?? []) if (!checked.includes(item)) checked.push(item);
     for (const raw of data.findings) {
       const file = repoRelative(raw.file, repoDir);
-      const key = `${file}\0${raw.title.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()}`;
-      const firstRun = seenIn.get(key);
-      if (firstRun !== undefined && firstRun !== n) continue;
-      seenIn.set(key, n);
-      findings.push({
+      const merged = {
         ...raw,
         file,
         severity: toSeverity(raw.severity, labels),
         ...(labels !== DEFAULT_SEVERITIES ? { label: raw.severity } : {}),
         ...(pass ? { pass: pass.name } : {}),
-      });
+      };
+      const fp = fingerprint(file, raw.title);
+      const at = seen.get(fp);
+      if (at === undefined) {
+        seen.set(fp, findings.length);
+        findings.push(merged);
+      } else if (RANK[merged.severity] < RANK[findings[at]!.severity]) {
+        findings[at] = merged;
+      }
     }
   });
   return { findings, summaries, checked };
@@ -362,10 +377,6 @@ function applyVerdicts<F extends { category: string }>(
     }
   }
   return findings.filter((_, index) => !rejected.has(index));
-}
-
-function describeFile(f: ChangedFile): string {
-  return f.previousPath ? `- ${f.path} (${f.status} from ${f.previousPath})` : `- ${f.path} (${f.status})`;
 }
 
 /** Like Promise.all over `items`, with at most `limit` running at once; results keep their order. */

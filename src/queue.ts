@@ -2,7 +2,21 @@ import { DatabaseSync } from "node:sqlite";
 import type { JobOutcome } from "./job.js";
 import type { ReviewJob } from "./triggers.js";
 
-export type Work = (job: ReviewJob, signal: AbortSignal) => Promise<JobOutcome>;
+/** What the queue hands a running job. */
+export interface JobRun {
+  /** Aborts when a newer request for the PR supersedes this job, or on shutdown. */
+  signal: AbortSignal;
+  /** Adds to today's spend at once, so it counts however the job ends. */
+  recordSpend(usd: number): void;
+  /** When the job was first queued (epoch ms). */
+  queuedAt: number;
+  /** What an earlier attempt of this job saved, if anything. */
+  saved: unknown;
+  /** Keeps JSON data with the job for its retries, e.g. a finished review whose publishing failed. */
+  save(data: unknown): void;
+}
+
+export type Work = (job: ReviewJob, run: JobRun) => Promise<JobOutcome>;
 
 export interface QueueOptions {
   /** SQLite file, or ":memory:". Put it on a volume so jobs survive deploys. */
@@ -25,6 +39,8 @@ interface ReadyRow {
   pr: string;
   payload: string;
   attempts: number;
+  saved: string | null;
+  created: number;
 }
 
 /** Review jobs and daily spend, persisted in SQLite. Knows nothing about running them. */
@@ -50,6 +66,9 @@ class JobStore {
       CREATE INDEX IF NOT EXISTS jobs_status ON jobs (status, run_after);
       CREATE TABLE IF NOT EXISTS spend (day TEXT PRIMARY KEY, usd REAL NOT NULL);
     `);
+    const columns = this.db.prepare("PRAGMA table_info(jobs)").all() as Array<{ name: string }>;
+    if (!columns.some((c) => c.name === "saved")) this.db.exec("ALTER TABLE jobs ADD COLUMN saved TEXT");
+    if (!columns.some((c) => c.name === "created")) this.db.exec("ALTER TABLE jobs ADD COLUMN created INTEGER");
   }
 
   /** A crash or an expired grace period left these mid-run: run them again. */
@@ -65,10 +84,10 @@ class JobStore {
   insert(pr: string, deliveryId: string, job: ReviewJob): number | undefined {
     const inserted = this.db
       .prepare(
-        `INSERT INTO jobs (pr, delivery, payload, status, run_after, updated)
-         VALUES (?, ?, ?, 'queued', ?, ?) ON CONFLICT (delivery) DO NOTHING`,
+        `INSERT INTO jobs (pr, delivery, payload, status, run_after, updated, created)
+         VALUES (?, ?, ?, 'queued', ?, ?, ?) ON CONFLICT (delivery) DO NOTHING`,
       )
-      .run(pr, deliveryId, JSON.stringify(job), this.now(), this.now());
+      .run(pr, deliveryId, JSON.stringify(job), this.now(), this.now(), this.now());
     return inserted.changes === 0 ? undefined : Number(inserted.lastInsertRowid);
   }
 
@@ -82,7 +101,7 @@ class JobStore {
   /** Queued jobs whose retry time has come, oldest first. */
   ready(): ReadyRow[] {
     return this.db
-      .prepare("SELECT id, pr, payload, attempts FROM jobs WHERE status = 'queued' AND run_after <= ? ORDER BY id")
+      .prepare("SELECT id, pr, payload, attempts, saved, COALESCE(created, updated) AS created FROM jobs WHERE status = 'queued' AND run_after <= ? ORDER BY id")
       .all(this.now()) as unknown as ReadyRow[];
   }
 
@@ -94,6 +113,10 @@ class JobStore {
     return (this.db.prepare("SELECT status FROM jobs WHERE id = ?").get(id) as { status: Status } | undefined)?.status;
   }
 
+  save(id: number, data: unknown): void {
+    this.db.prepare("UPDATE jobs SET saved = ? WHERE id = ?").run(JSON.stringify(data), id);
+  }
+
   setStatus(id: number, status: Status): void {
     this.db.prepare("UPDATE jobs SET status = ?, updated = ? WHERE id = ?").run(status, this.now(), id);
   }
@@ -102,9 +125,11 @@ class JobStore {
     this.db.prepare("UPDATE jobs SET status = 'queued', run_after = ?, updated = ? WHERE id = ?").run(runAfter, this.now(), id);
   }
 
-  /** Back to the queue without using up an attempt (the job was interrupted, not failed). */
-  requeueInterrupted(id: number): void {
-    this.db.prepare("UPDATE jobs SET status = 'queued', attempts = attempts - 1, updated = ? WHERE id = ?").run(this.now(), id);
+  /** Back to the queue without using up an attempt (the job was interrupted or is waiting, not failed). */
+  requeueInterrupted(id: number, runAfter = this.now()): void {
+    this.db
+      .prepare("UPDATE jobs SET status = 'queued', attempts = attempts - 1, run_after = ?, updated = ? WHERE id = ?")
+      .run(runAfter, this.now(), id);
   }
 
   queuedCount(): number {
@@ -223,19 +248,30 @@ export class ReviewQueue {
       // so a stale review can never post after a newer one starts.
       if ([...this.running.values()].some((r) => r.pr === row.pr)) continue;
       this.store.markRunning(row.id);
-      this.start(row.id, row.pr, JSON.parse(row.payload) as ReviewJob, row.attempts + 1);
+      this.start(row, JSON.parse(row.payload) as ReviewJob, row.attempts + 1);
     }
     this.checkIdle();
   };
 
-  private start(id: number, pr: string, job: ReviewJob, attempt: number): void {
+  private start(row: ReadyRow, job: ReviewJob, attempt: number): void {
+    const { id, pr } = row;
     const controller = new AbortController();
+    const run: JobRun = {
+      signal: controller.signal,
+      recordSpend: (usd) => this.store.addSpend(usd),
+      queuedAt: Number(row.created),
+      saved: row.saved === null ? undefined : JSON.parse(row.saved),
+      save: (data) => this.store.save(id, data),
+    };
     const done = (async () => {
       let next: Status = "done";
       try {
-        const outcome = await this.work(job, controller.signal);
-        this.store.addSpend(outcome.kind === "skipped" ? 0 : (outcome.costUsd ?? 0));
+        const outcome = await this.work(job, run);
         this.log({ pr, msg: "job finished", attempt, ...outcome });
+        if (outcome.kind === "waiting") {
+          this.store.requeueInterrupted(id, outcome.until);
+          return;
+        }
         if (outcome.kind === "failed") {
           if (outcome.transient && attempt < this.options.maxAttempts) {
             this.store.retryAt(id, this.now() + this.backoff(attempt));

@@ -7,6 +7,7 @@ import {
 import {
   parseState,
   renderFailure,
+  renderWaiting,
   SUMMARY_MARKER,
   type FailureReason,
   type PlannedComment,
@@ -22,6 +23,8 @@ export interface Publisher {
   prior(): Promise<ReviewState | undefined>;
   publish(report: ReviewReport): Promise<void>;
   failed(reason: FailureReason, prior?: ReviewState): Promise<void>;
+  /** The review will run again at `until` (epoch ms), after Claude's usage limit resets. */
+  waiting(until: number, prior?: ReviewState): Promise<void>;
 }
 
 /** The dry-run adapter: writes what would be posted to a log. */
@@ -36,13 +39,16 @@ export function logPublisher(
     async publish(report) {
       log({
         msg: "would post",
-        inline: report.inline,
-        fileComments: report.fileComments,
-        summary: report.renderSummary(new Set()),
+        inlineComments: report.inline.length,
+        fileComments: report.fileComments.length,
+        review: report.renderText(),
       });
     },
     async failed(reason) {
       log({ msg: "would report failure", reason });
+    },
+    async waiting(until) {
+      log({ msg: "would report waiting", until: new Date(until).toISOString() });
     },
   };
 }
@@ -71,6 +77,8 @@ export function githubPublisher(opts: {
    * only trusted from our own comments.
    */
   isOwnComment: (comment: IssueComment) => boolean;
+  /** The configured trigger phrase, which a failure summary invites people to retry with. */
+  trigger: string;
   log?: (fields: Record<string, unknown>) => void;
 }): Publisher {
   const { gh, repo, prNumber } = opts;
@@ -188,8 +196,11 @@ export function githubPublisher(opts: {
       await react("hooray");
     },
     async failed(reason, prior) {
-      await upsertSummary(renderFailure(reason, prior));
+      await upsertSummary(renderFailure(reason, { trigger: opts.trigger, prior }));
       await react("confused");
+    },
+    async waiting(until, prior) {
+      await upsertSummary(renderWaiting(until, prior));
     },
   };
 }

@@ -28,7 +28,10 @@ GitHub ─webhook─▶ HTTP adapter ─▶ review queue ─▶ PR workspace ─
    - A redelivered webhook is ignored.
    - A newer request for a PR replaces the old one. The older review stops before the newer
      one starts.
-   - Transient failures (git, GitHub) retry with backoff.
+   - Transient failures (git, GitHub, an overloaded Claude API) retry with backoff.
+   - If the review finished but posting it failed, the retry posts the saved review instead of
+     paying for it again (as long as the PR head hasn't moved).
+   - A review waiting for Claude's usage limit is queued again for the reset time.
 3. **PR workspace.**
    - The service fetches only what it needs, at depth 1: the PR head by SHA (full tree, checked
      out), the base branch tip, and the diff base (blobs fetched lazily).
@@ -122,7 +125,10 @@ Things to know:
 - **Token owner:** the token belongs to the person who generated it and lasts one year. Set a
   renewal reminder.
 - **Shared usage limits:** reviews share that seat's limits. When a limit is hit, the review
-  fails with a "usage limit" note on the PR. You can reduce usage with `REVIEW_EFFORT`,
+  waits for the reset time Claude reports (the summary comment says when) and runs again then,
+  without using up a retry. If the reset is more than 24 h after the review was requested, or
+  Claude gives no reset time, it fails with a "usage limit" note on the PR instead. A rejected
+  (expired or revoked) token fails with its own note. You can reduce usage with `REVIEW_EFFORT`,
   `REVIEW_VERIFY=false` or `ALLOWED_REPOS`.
 - **Cost figures:** costs in the logs are estimates at API prices; nothing is billed per token
   on a subscription.
@@ -143,8 +149,8 @@ wrong.
 | `GITHUB_APP_ID` / `GITHUB_APP_PRIVATE_KEY` |                          | App auth. The PEM may use literal `\n`                                                                                                                |
 | `GITHUB_TOKEN`                             |                          | PAT, when not using an app                                                                                                                            |
 | `GITHUB_API_URL`                           | `https://api.github.com` | Set for GitHub Enterprise Server                                                                                                                      |
-| `CLAUDE_CODE_OAUTH_TOKENS`                 |                          | Several tokens, comma- or newline-separated. Reviews rotate across them; a token at its usage limit rests for `CLAUDE_TOKEN_COOLDOWN_MIN`, a rejected one for 24 h, and the request retries on the next. Each Claude process sees only its own token; tokens are logged as `#1`, `#2`… |
-| `CLAUDE_TOKEN_COOLDOWN_MIN`                | `60`                     | How long a token at its usage limit rests |
+| `CLAUDE_CODE_OAUTH_TOKENS`                 |                          | Several tokens, comma- or newline-separated. Reviews rotate across them; a token at its usage limit rests until the reset time Claude reports (or `CLAUDE_TOKEN_COOLDOWN_MIN` without one), a rejected one for 24 h, and the request retries on the next. Each Claude process sees only its own token; tokens are logged as `#1`, `#2`… |
+| `CLAUDE_TOKEN_COOLDOWN_MIN`                | `60`                     | How long a token at its usage limit rests when Claude reports no reset time |
 | `CLAUDE_CODE_OAUTH_TOKEN`                  |                          | Model access (see above)                                                                                                                              |
 | `POST_REVIEWS`                             | `false`                  | `true` posts to GitHub; otherwise reviews are only logged                                                                                             |
 | `ALLOWED_REPOS`                            | (all)                    | Comma-separated `owner/repo` allowlist                                                                                                                |
@@ -156,7 +162,7 @@ wrong.
 | `REVIEW_MAX_BUDGET_USD`                    | `10`                     | Ceiling for any single pass                                                                                                                           |
 | `REVIEW_SINGLE_PASS`                       | `true`                   | One review pass covering every `REVIEW.md` pass. `false` runs one focused pass each (≈2× cost; on our eval it added a few real findings, mostly nits) |
 | `REVIEW_MAX_PARALLEL_PASSES`               | `2`                      | Review passes running at once within one review (multi-pass mode)                                                                                     |
-| `DAILY_BUDGET_USD`                         | `50`                     | Reviews stop starting once a UTC day's spend reaches this; they wait for the next day. `0` = no cap                                                   |
+| `DAILY_BUDGET_USD`                         | `50`                     | Reviews stop starting once a UTC day's spend reaches this; they wait for the next day. Every Claude run counts when it finishes, including reviews that were superseded or failed. `0` = no cap                                                   |
 | `REVIEW_MAX_TURNS`                         | `80`                     | Per pass                                                                                                                                              |
 | `REVIEW_PASS_TIMEOUT_MIN`                  | `20`                     | Per pass                                                                                                                                              |
 | `REVIEW_JOB_TIMEOUT_MIN`                   | `50`                     | Whole review, including fetch and publish                                                                                                             |

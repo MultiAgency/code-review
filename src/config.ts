@@ -133,6 +133,19 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
 }
 
 /** The webhook service also needs a secret and a way to authenticate to GitHub. */
+/** For entry points: the config (after `check`), or its problem printed and exit 1. */
+export function loadConfigOrExit(check?: (config: Config) => void): Config {
+  try {
+    const config = loadConfig();
+    check?.(config);
+    return config;
+  } catch (error) {
+    if (!(error instanceof ConfigError)) throw error;
+    console.error(error.message);
+    process.exit(1);
+  }
+}
+
 export function checkServiceConfig(config: Config): void {
   const problems: string[] = [];
   if (!config.GITHUB_WEBHOOK_SECRET)

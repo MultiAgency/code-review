@@ -2,104 +2,20 @@
 import { createServer } from "node:http";
 import { dirname } from "node:path";
 import { mkdirSync } from "node:fs";
-import {
-  checkServiceConfig,
-  ConfigError,
-  loadConfig,
-  reviewOptions,
-  type Config,
-} from "./config.js";
-import { gitAuthEnv } from "./env.js";
-import {
-  githubClient,
-  installationToken,
-  type GitHubClient,
-} from "./github.js";
-import { runReviewJob } from "./job.js";
-import {
-  githubPublisher,
-  logPublisher,
-  type IssueComment,
-} from "./publisher.js";
+import { checkServiceConfig, loadConfigOrExit } from "./config.js";
 import { openReviewQueue } from "./queue.js";
+import { reviewWork } from "./review-work.js";
 import { webhookHandler } from "./server.js";
-import { agentRunnerFor } from "./token-pool.js";
-import type { ReviewJob } from "./triggers.js";
-import { openPullRequestWorkspace } from "./workspace.js";
 
 function log(fields: Record<string, unknown>) {
   console.log(JSON.stringify({ time: new Date().toISOString(), ...fields }));
 }
 
-let config: Config;
-try {
-  config = loadConfig();
-  checkServiceConfig(config);
-} catch (error) {
-  if (!(error instanceof ConfigError)) throw error;
-  console.error(error.message);
-  process.exit(1);
-}
-
-const agent = agentRunnerFor(config, log);
-const auth = {
-  apiUrl: config.GITHUB_API_URL,
-  ...(config.GITHUB_APP_ID ? { appId: config.GITHUB_APP_ID } : {}),
-  ...(config.GITHUB_APP_PRIVATE_KEY
-    ? { appPrivateKey: config.GITHUB_APP_PRIVATE_KEY }
-    : {}),
-  ...(config.GITHUB_TOKEN ? { token: config.GITHUB_TOKEN } : {}),
-};
-
-/** Our own comments: by this GitHub App, or by the PAT's user. */
-async function ownCommentCheck(
-  gh: GitHubClient,
-): Promise<(c: IssueComment) => boolean> {
-  if (config.GITHUB_APP_ID) {
-    const appId = Number(config.GITHUB_APP_ID);
-    return (c) => c.performed_via_github_app?.id === appId;
-  }
-  const { login } = await gh.request<{ login: string }>("GET", "/user");
-  return (c) => c.user?.login === login;
-}
-
-async function review(job: ReviewJob, signal: AbortSignal) {
-  const token = installationToken(auth, job.installationId);
-  const gh = githubClient({ apiUrl: config.GITHUB_API_URL, token });
-  const jobLog = (fields: Record<string, unknown>) =>
-    log({ pr: `${job.repo}#${job.prNumber}`, ...fields });
-  const publisher = config.POST_REVIEWS
-    ? githubPublisher({
-        gh,
-        repo: job.repo,
-        prNumber: job.prNumber,
-        ...(job.commentId !== undefined
-          ? { triggerCommentId: job.commentId }
-          : {}),
-        isOwnComment: await ownCommentCheck(gh),
-        log: jobLog,
-      })
-    : logPublisher(jobLog);
-  return runReviewJob(
-    job,
-    {
-      agent,
-      reviewOptions: reviewOptions(config),
-      maxInline: config.REVIEW_MAX_INLINE_COMMENTS,
-      gh,
-      gitEnv: async () => gitAuthEnv(await token()),
-      publisher,
-      openWorkspace: openPullRequestWorkspace,
-      log,
-      timeoutMs: config.REVIEW_JOB_TIMEOUT_MIN * 60_000,
-    },
-    signal,
-  );
-}
+const config = loadConfigOrExit(checkServiceConfig);
 
 if (config.QUEUE_DB !== ":memory:")
   mkdirSync(dirname(config.QUEUE_DB), { recursive: true });
-const queue = openReviewQueue(review, {
+const queue = openReviewQueue(reviewWork(config, { log }), {
   dbPath: config.QUEUE_DB,
   concurrency: config.MAX_CONCURRENT_REVIEWS,
   maxAttempts: config.REVIEW_MAX_ATTEMPTS,

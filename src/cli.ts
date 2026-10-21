@@ -2,12 +2,7 @@
 // Prints the review; never posts anywhere. Exits 2 when a high-severity finding is reported.
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
-import {
-  ConfigError,
-  loadConfig,
-  reviewOptions,
-  type Config,
-} from "./config.js";
+import { loadConfigOrExit, reviewOptions } from "./config.js";
 import { buildReport } from "./report.js";
 import { ReviewFailedError, reviewChanges } from "./review.js";
 import { agentRunnerFor } from "./token-pool.js";
@@ -22,14 +17,7 @@ const { values } = parseArgs({
   },
 });
 
-let config: Config;
-try {
-  config = loadConfig();
-} catch (error) {
-  if (!(error instanceof ConfigError)) throw error;
-  console.error(error.message);
-  process.exit(1);
-}
+const config = loadConfigOrExit();
 
 await using workspace = await openLocalWorkspace({
   repoDir: resolve(values.repo),
@@ -47,23 +35,12 @@ const result = await reviewChanges(
   console.error(`[claude-pr-review] ${error.message}`);
   process.exit(1);
 });
-// Same rendering the service posts, with every finding in the summary.
 const report = buildReport(result, {
   headSha: workspace.headSha,
   mode: "full",
   maxInline: 0,
+  trigger: config.REVIEW_TRIGGER,
 });
-console.log(
-  values.json
-    ? JSON.stringify(result, null, 2)
-    : forTerminal(report.renderSummary(new Set())),
-);
+console.log(values.json ? JSON.stringify(result, null, 2) : report.renderText());
 process.exitCode = result.findings.some((f) => f.severity === "high") ? 2 : 0;
 
-
-function forTerminal(markdown: string): string {
-  return markdown
-    .replace(/^<!--.*-->$/gm, "")
-    .replace(/^<sub>.*<\/sub>$/gm, "")
-    .trim();
-}

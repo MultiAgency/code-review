@@ -2,13 +2,12 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   buildReport,
-  fingerprint,
   parseState,
   priorFindings,
   renderFailure,
   type ReviewState,
 } from "../src/report.ts";
-import type { Finding, ReviewResult } from "../src/review.ts";
+import { fingerprint, type Finding, type ReviewResult } from "../src/review.ts";
 
 const f = (over: Partial<Finding> = {}): Finding => ({
   file: "src/a.ts",
@@ -51,6 +50,7 @@ test("high and medium findings on diff lines become inline comments, capped; the
   const report = buildReport(result(findings), {
     headSha: HEAD,
     mode: "full",
+    trigger: "@private-review",
     maxInline: 2,
   });
   assert.deepEqual(
@@ -68,6 +68,7 @@ test("file-level comments for findings on a changed file but not a diff line", (
   const report = buildReport(result([f({ placement: { kind: "file" } })]), {
     headSha: HEAD,
     mode: "full",
+    trigger: "@private-review",
     maxInline: 10,
   });
   assert.equal(report.inline.length, 0);
@@ -89,7 +90,7 @@ test("multi-line placements and one-click suggestions only for exact matches", (
         fix_code: "x",
       }),
     ]),
-    { headSha: HEAD, mode: "full", maxInline: 10 },
+    { headSha: HEAD, mode: "full", trigger: "@private-review", maxInline: 10 },
   );
   const [exact, inexact] = report.inline;
   assert.equal(exact!.startLine, 2);
@@ -105,6 +106,7 @@ test("model text can't plant suggestion blocks or forge hidden markers", () => {
   const report = buildReport(result([evil]), {
     headSha: HEAD,
     mode: "full",
+    trigger: "@private-review",
     maxInline: 10,
   });
   const comment = report.inline[0]!.body;
@@ -119,6 +121,7 @@ test("state round-trips, and findings already commented on are never posted agai
   const first = buildReport(result([f()]), {
     headSha: OLD,
     mode: "full",
+    trigger: "@private-review",
     maxInline: 10,
   });
   const state = parseState(
@@ -138,6 +141,7 @@ test("state round-trips, and findings already commented on are never posted agai
   const again = buildReport(result([f({ line: 5 })]), {
     headSha: HEAD,
     mode: "full",
+    trigger: "@private-review",
     prior: state,
     maxInline: 10,
   });
@@ -168,6 +172,7 @@ test("a full review of a new head resolves findings it no longer reports; an inc
   const full = buildReport(result([]), {
     headSha: HEAD,
     mode: "full",
+    trigger: "@private-review",
     prior,
     maxInline: 10,
   });
@@ -178,6 +183,7 @@ test("a full review of a new head resolves findings it no longer reports; an inc
   const inc = buildReport(result([]), {
     headSha: HEAD,
     mode: "incremental",
+    trigger: "@private-review",
     prior,
     maxInline: 10,
   });
@@ -197,6 +203,7 @@ test("unverified reviews say so, and secrets in model text are redacted", () => 
       {
         headSha: HEAD,
         mode: "full",
+    trigger: "@private-review",
         maxInline: 0,
       },
     );
@@ -215,6 +222,7 @@ test("the summary stays under GitHub's size limit and keeps its state", () => {
   const summary = buildReport(result(many), {
     headSha: HEAD,
     mode: "full",
+    trigger: "@private-review",
     maxInline: 10,
   }).renderSummary(new Set());
   assert.ok(summary.length <= 60_000, String(summary.length));
@@ -224,9 +232,10 @@ test("the summary stays under GitHub's size limit and keeps its state", () => {
 
 test("failure summaries name a reason, invite a retry, and keep earlier state", () => {
   const prior: ReviewState = { v: 1, head: OLD, findings: [] };
-  const body = renderFailure("usage_limit", prior);
+  const body = renderFailure("usage_limit", { trigger: "@review-bot", prior });
   assert.match(body, /usage limit/);
-  assert.match(body, /@private-review/);
+  assert.match(body, /Comment `@review-bot` to retry/);
+  assert.doesNotMatch(body, /@private-review/);
   assert.deepEqual(parseState(body), prior);
 });
 
@@ -245,7 +254,7 @@ test("comments and summary use the repo's pass and severity names, and say what 
       ],
       { checked: ["finishAutoJob and settleAutoJobs", "settleSourceClaim"] },
     ),
-    { headSha: HEAD, mode: "full", maxInline: 10 },
+    { headSha: HEAD, mode: "full", trigger: "@private-review", maxInline: 10 },
   );
   assert.match(report.inline[0]!.body, /^\*\*🔴 Bugs · Important: Loop\*\*/);
   const summary = report.renderSummary(new Set([report.inline[0]!.fp]));
@@ -254,4 +263,52 @@ test("comments and summary use the repo's pass and severity names, and say what 
     summary,
     /Checked: finishAutoJob and settleAutoJobs; settleSourceClaim/,
   );
+});
+
+test("the summary invites a re-review with the configured trigger phrase", () => {
+  const summary = buildReport(result([f()]), {
+    headSha: HEAD,
+    mode: "full",
+    trigger: "@review-bot",
+    maxInline: 0,
+  }).renderSummary(new Set());
+  assert.match(summary, /`@review-bot` to re-review/);
+  assert.match(summary, /`@review-bot full`/);
+  assert.doesNotMatch(summary, /@private-review/);
+});
+
+test("plain text lists every finding without markers, state or markdown", () => {
+  const prior: ReviewState = {
+    v: 1,
+    head: OLD,
+    findings: [
+      {
+        fp: fingerprint("src/b.ts", "Old bug"),
+        file: "src/b.ts",
+        line: 9,
+        severity: "medium",
+        title: "Old bug",
+        body: "",
+        status: "open",
+        commented: true,
+      },
+    ],
+  };
+  const text = buildReport(
+    result(
+      [
+        f({ suggestion: "Guard b." }),
+        f({ title: "Style", severity: "low", placement: { kind: "summary" }, body: "Line one.\nLine two \u001b[31mred" }),
+      ],
+      { verification: "unverified", skipped: 2 },
+    ),
+    { headSha: HEAD, mode: "incremental", trigger: "@review-bot", prior, maxInline: 10 },
+  ).renderText();
+  assert.doesNotMatch(text, /<!--|<sub>|\*\*|`|\u001b/);
+  assert.match(text, /^Claude review · aaaaaaa \(changes since bbbbbbb\)/);
+  assert.match(text, /not double-checked/);
+  assert.match(text, /🔴 High · correctness  src\/a\.ts:2  Division by zero\n    b is Infinity\.\n    Suggested fix: Guard b\./);
+  assert.match(text, /🟡 Low · correctness  src\/a\.ts:2  Style\n    Line one\.\n    Line two \[31mred/);
+  assert.match(text, /Still open from earlier reviews\n  🟠 Medium  src\/b\.ts:9  Old bug/);
+  assert.match(text, /Skipped 2 file\(s\)/);
 });

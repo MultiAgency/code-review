@@ -4,7 +4,6 @@ import { runReviewJob, type JobDeps } from "../src/job.ts";
 import { githubPublisher } from "../src/publisher.ts";
 import { parseState } from "../src/report.ts";
 import type { ReviewJob } from "../src/triggers.ts";
-import { openPullRequestWorkspace } from "../src/workspace.ts";
 import { fakeGitHub } from "./support/fake-github.ts";
 import { gitRepo } from "./support/git-repo.ts";
 import { ok, scriptedAgent } from "./support/scripted-agent.ts";
@@ -58,13 +57,30 @@ function deps(
       repo: "o/r",
       prNumber: 1,
       isOwnComment: (c) => c.performed_via_github_app?.id === 42,
+      trigger: "@private-review",
     }),
-    openWorkspace: openPullRequestWorkspace,
+    trigger: "@private-review",
     log: () => {},
+    timeoutMs: 60_000,
   };
 }
 
-const signal = () => new AbortController().signal;
+/** What the queue hands a job: an abort signal, a spend meter and a save slot. */
+function run(saved?: unknown) {
+  const r = {
+    signal: new AbortController().signal,
+    spent: 0,
+    queuedAt: Date.now(),
+    saved,
+    recordSpend(usd: number) {
+      r.spent += usd;
+    },
+    save(data: unknown) {
+      r.saved = data;
+    },
+  };
+  return r;
+}
 
 test("an opened PR gets a full review, posted inline with a summary", async () => {
   const p = pr();
@@ -72,7 +88,7 @@ test("an opened PR gets a full review, posted inline with a summary", async () =
   const { runner, requests } = scriptedAgent(() =>
     ok({ summary: "One bug.", findings: [bug] }),
   );
-  const outcome = await runReviewJob(job(), deps(gh, runner), signal());
+  const outcome = await runReviewJob(job(), deps(gh, runner), run());
   assert.equal(outcome.kind, "done");
   assert.match(requests[0]!.prompt, /\+bug\(\)/);
   assert.equal(gh.state.reviews.length, 1);
@@ -85,7 +101,7 @@ test("a re-review comment after new commits reviews only those commits and passe
   await runReviewJob(
     job(),
     deps(gh, scriptedAgent(() => ok({ summary: "s", findings: [bug] })).runner),
-    signal(),
+    run(),
   );
 
   gh.state.head = p.push({ "src/b.ts": "new()\n" });
@@ -93,7 +109,7 @@ test("a re-review comment after new commits reviews only those commits and passe
   const outcome = await runReviewJob(
     job({ reason: "comment", commentId: 5 }),
     deps(gh, second.runner),
-    signal(),
+    run(),
   );
   assert.equal(outcome.kind, "done");
   const prompt = second.requests[0]!.prompt;
@@ -120,7 +136,7 @@ async function reviewedThenPushed(
       first,
       scriptedAgent(() => ok({ summary: "s", findings: [bug] })).runner,
     ),
-    signal(),
+    run(),
   );
   const next = p.push({ "src/b.ts": "new()\n" });
   const gh = fakeGitHub({
@@ -139,7 +155,7 @@ test("`@private-review full` reviews the whole PR and resolves fixed findings", 
   await runReviewJob(
     job({ reason: "comment", full: true }),
     deps(gh, second.runner),
-    signal(),
+    run(),
   );
   assert.match(second.requests[0]!.prompt, /\+bug\(\)/);
   assert.match(gh.state.comments[0]!.body!, /Resolved since the last review/);
@@ -153,22 +169,66 @@ test("after a force-push, a re-review is full", async () => {
   await runReviewJob(
     job({ reason: "comment" }),
     deps(gh, second.runner),
-    signal(),
+    run(),
   );
   assert.match(second.requests[0]!.prompt, /\+bug\(\)/);
   assert.doesNotMatch(gh.state.comments[0]!.body!, /changes since/);
 });
 
-test("a usage-limit failure is reported on the PR and not retried", async () => {
+test("a usage limit with a known reset waits for it, saying so on the PR", async () => {
+  const p = pr();
+  const gh = fakeGitHub({ head: p.head, base: p.base, cloneUrl: p.cloneUrl });
+  const until = Date.parse("2099-01-01T14:30:00Z");
+  const r = { ...run(), queuedAt: until - 60 * 60_000 };
+  const { runner } = scriptedAgent(() => ({ ok: false, failure: "usage_limit", detail: "429", costUsd: 0, retryAt: until }));
+  const outcome = await runReviewJob(job(), deps(gh, runner), r);
+  assert.deepEqual(outcome, { kind: "waiting", until, costUsd: 0 });
+  assert.match(gh.state.comments[0]!.body!, /run again after it resets, at about 14:30 UTC/);
+  assert.ok(!gh.state.reactions.some((x) => x.content === "confused"));
+});
+
+test("a usage limit that resets too late fails instead of waiting", async () => {
+  const p = pr();
+  const gh = fakeGitHub({ head: p.head, base: p.base, cloneUrl: p.cloneUrl });
+  const r = run();
+  const { runner } = scriptedAgent(() => ({
+    ok: false,
+    failure: "usage_limit",
+    detail: "429",
+    costUsd: 0,
+    retryAt: r.queuedAt + 25 * 60 * 60_000,
+  }));
+  const outcome = await runReviewJob(job(), deps(gh, runner), r);
+  assert.equal(outcome.kind === "failed" && outcome.reason, "usage_limit");
+});
+
+test("a rejected token or a too-large PR fails for good; an overloaded API is retried", async () => {
+  const p = pr();
+  for (const [failure, reason, transient] of [
+    ["auth_rejected", "auth", false],
+    ["too_large", "too_large", false],
+    ["overloaded", "overloaded", true],
+  ] as const) {
+    const gh = fakeGitHub({ head: p.head, base: p.base, cloneUrl: p.cloneUrl });
+    const { runner } = scriptedAgent(() => ({ ok: false, failure, detail: "x", costUsd: 0 }));
+    const outcome = await runReviewJob(job(), deps(gh, runner), run());
+    assert.deepEqual(
+      outcome.kind === "failed" && [outcome.reason, outcome.transient],
+      [reason, transient],
+    );
+  }
+});
+
+test("a usage-limit failure without a reset time is reported on the PR and not retried", async () => {
   const p = pr();
   const gh = fakeGitHub({ head: p.head, base: p.base, cloneUrl: p.cloneUrl });
   const { runner } = scriptedAgent(() => ({
     ok: false,
-    failure: "auth_or_limit",
+    failure: "usage_limit",
     detail: "429",
     costUsd: 0,
   }));
-  const outcome = await runReviewJob(job(), deps(gh, runner), signal());
+  const outcome = await runReviewJob(job(), deps(gh, runner), run());
   assert.deepEqual(
     [
       outcome.kind,
@@ -191,7 +251,7 @@ test("a fetch failure is reported as a transient git failure", async () => {
   const outcome = await runReviewJob(
     job(),
     deps(gh, scriptedAgent().runner),
-    signal(),
+    run(),
   );
   assert.equal(outcome.kind, "failed");
   assert.equal(outcome.kind === "failed" && outcome.reason, "git");
@@ -209,7 +269,48 @@ test("a closed PR is skipped without a review", async () => {
   const outcome = await runReviewJob(
     job(),
     deps(gh, scriptedAgent().runner),
-    signal(),
+    run(),
   );
   assert.equal(outcome.kind, "skipped");
+});
+
+test("every Claude pass counts toward spend as it finishes, even when publishing then fails", async () => {
+  const p = pr();
+  const gh = fakeGitHub({ head: p.head, base: p.base, cloneUrl: p.cloneUrl, failCommentWrites: 2 });
+  const r = run();
+  const outcome = await runReviewJob(
+    job(),
+    deps(gh, scriptedAgent(() => ok({ summary: "s", findings: [bug] }, 0.4)).runner),
+    r,
+  );
+  assert.equal(outcome.kind === "failed" && outcome.reason, "github");
+  assert.equal(outcome.kind === "failed" && outcome.transient, true);
+  assert.equal(r.spent, 0.4);
+  assert.equal(outcome.kind === "failed" && outcome.costUsd, 0.4);
+});
+
+test("a finished review whose publishing failed is published on retry without running Claude again", async () => {
+  const p = pr();
+  const gh = fakeGitHub({ head: p.head, base: p.base, cloneUrl: p.cloneUrl, failCommentWrites: 2 });
+  const first = run();
+  await runReviewJob(job(), deps(gh, scriptedAgent(() => ok({ summary: "s", findings: [bug] })).runner), first);
+
+  const retry = run(first.saved);
+  const outcome = await runReviewJob(job(), deps(gh, scriptedAgent().runner), retry);
+  assert.equal(outcome.kind, "done");
+  assert.equal(retry.spent, 0);
+  assert.equal(parseState(gh.state.comments[0]!.body!)!.findings[0]!.title, "bug() throws");
+});
+
+test("a saved review is not reused once the PR head has moved", async () => {
+  const p = pr();
+  const gh = fakeGitHub({ head: p.head, base: p.base, cloneUrl: p.cloneUrl, failCommentWrites: 2 });
+  const first = run();
+  await runReviewJob(job(), deps(gh, scriptedAgent(() => ok({ summary: "s", findings: [bug] })).runner), first);
+
+  gh.state.head = p.push({ "src/b.ts": "new()\n" });
+  const again = scriptedAgent(() => ok({ summary: "s", findings: [] }));
+  const outcome = await runReviewJob(job(), deps(gh, again.runner), run(first.saved));
+  assert.equal(outcome.kind, "done");
+  assert.equal(again.requests.length, 1);
 });

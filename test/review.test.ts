@@ -132,7 +132,7 @@ test("verify removes disproved findings, keeps skipped ones, and never removes p
 test("a failed verify pass keeps every finding, labelled unverified", async () => {
   const r = prRepo();
   const { runner } = scriptedAgent(
-    () => ok({ summary: "s", findings: [finding(), finding({ line: 3 })] }),
+    () => ok({ summary: "s", findings: [finding(), finding({ title: "c is unused", line: 3 })] }),
     () => ({ ok: false, failure: "budget_exceeded", detail: "", costUsd: 0.4 }),
   );
   const result = await reviewChanges(await input(r), {
@@ -148,7 +148,7 @@ test("a failed review pass raises a typed failure with its cost", async () => {
   const r = prRepo();
   const { runner } = scriptedAgent(() => ({
     ok: false,
-    failure: "auth_or_limit",
+    failure: "auth_rejected",
     detail: "401",
     costUsd: 0,
   }));
@@ -156,7 +156,7 @@ test("a failed review pass raises a typed failure with its cost", async () => {
     reviewChanges(await input(r), { agent: runner, options }),
     (error) => {
       assert.ok(error instanceof ReviewFailedError);
-      assert.equal(error.failure, "auth_or_limit");
+      assert.equal(error.failure, "auth_rejected");
       return true;
     },
   );
@@ -170,7 +170,7 @@ test("absolute and ./ paths are made repo-relative", async () => {
       summary: "s",
       findings: [
         finding({ file: join(ws.workspace.repoDir, "src/a.ts") }),
-        finding({ file: "./src/a.ts", severity: "low" }),
+        finding({ file: "./src/a.ts", title: "Other", severity: "low" }),
       ],
     }),
   );
@@ -272,9 +272,9 @@ test("findings are ordered by severity", async () => {
     ok({
       summary: "s",
       findings: [
-        finding({ severity: "low" }),
-        finding({ severity: "high" }),
-        finding({ severity: "medium" }),
+        finding({ title: "Low", severity: "low" }),
+        finding({ title: "High", severity: "high" }),
+        finding({ title: "Medium", severity: "medium" }),
       ],
     }),
   );
@@ -632,4 +632,30 @@ test("extraPasses add a focused pass for a named REVIEW.md pass next to the comb
     ],
   );
   assert.equal(result.summary, "combined");
+});
+
+test("findings that share a fingerprint are merged into one, even from the same run", async () => {
+  const r = prRepo();
+  const { runner } = scriptedAgent(() =>
+    ok({
+      summary: "s",
+      findings: [
+        finding({ severity: "medium" }),
+        finding({ title: "division BY zero!", line: 3, body: "Same defect, said again." }),
+        finding({ title: "Another bug" }),
+      ],
+    }),
+  );
+  const result = await reviewChanges(await input(r), {
+    agent: runner,
+    options: { ...options, verify: false },
+  });
+  // The most severe report of the finding wins.
+  assert.deepEqual(
+    result.findings.map((f) => [f.title, f.severity]),
+    [
+      ["division BY zero!", "high"],
+      ["Another bug", "high"],
+    ],
+  );
 });

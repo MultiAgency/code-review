@@ -6,6 +6,7 @@ import {
   type GitHubClient,
 } from "./github.js";
 import type { Publisher } from "./publisher.js";
+import type { JobRun } from "./queue.js";
 import {
   buildReport,
   priorFindings,
@@ -16,9 +17,10 @@ import {
   ReviewFailedError,
   reviewChanges,
   type ReviewOptions,
+  type ReviewResult,
 } from "./review.js";
 import type { ReviewJob } from "./triggers.js";
-import type { openPullRequestWorkspace } from "./workspace.js";
+import { openPullRequestWorkspace } from "./workspace.js";
 
 export interface JobDeps {
   agent: AgentRunner;
@@ -28,15 +30,19 @@ export interface JobDeps {
   /** Git auth for fetching, from a current token. */
   gitEnv: () => Promise<NodeJS.ProcessEnv>;
   publisher: Publisher;
-  openWorkspace: typeof openPullRequestWorkspace;
+  /** The configured trigger phrase, which the summary invites people to comment. */
+  trigger: string;
   log: (fields: Record<string, unknown>) => void;
   /** Wall-clock cap for the whole job; reported on the PR as a timeout. */
-  timeoutMs?: number;
+  timeoutMs: number;
 }
 
+/** How a job ended. `costUsd` is for the logs; spend is recorded as each pass finishes. */
 export type JobOutcome =
   | { kind: "done"; costUsd: number }
   | { kind: "skipped"; why: string }
+  /** Claude's usage limit: run the job again at `until` (epoch ms). */
+  | { kind: "waiting"; until: number; costUsd: number }
   | {
       kind: "failed";
       reason: FailureReason;
@@ -45,8 +51,14 @@ export type JobOutcome =
       costUsd?: number;
     };
 
+/** How long a review may wait in total for Claude's usage limit to reset before it fails. */
+export const MAX_WAIT_MS = 24 * 60 * 60_000;
+
 const AGENT_REASON: Record<AgentFailureKind, FailureReason> = {
-  auth_or_limit: "usage_limit",
+  usage_limit: "usage_limit",
+  auth_rejected: "auth",
+  overloaded: "overloaded",
+  too_large: "too_large",
   budget_exceeded: "budget",
   turn_limit: "budget",
   timeout: "timeout",
@@ -55,18 +67,37 @@ const AGENT_REASON: Record<AgentFailureKind, FailureReason> = {
   crashed: "unknown",
 };
 
+/** A finished review kept with the job, so a publishing retry doesn't pay for it again. */
+interface SavedReview {
+  headSha: string;
+  diffBase: string;
+  mode: "full" | "incremental";
+  result: ReviewResult;
+}
+
 /**
  * One review of one PR, start to finish: fetch, review (full or incremental),
- * publish. Failures are reported on the PR and returned, never thrown, except
- * when `outer` aborts (a newer request or shutdown takes over).
+ * publish. Every Claude pass's cost is recorded as it finishes. Failures are
+ * reported on the PR and returned, never thrown, except when the run's signal
+ * aborts (a newer request or shutdown takes over).
  */
 export async function runReviewJob(
   job: ReviewJob,
   deps: JobDeps,
-  outer: AbortSignal,
+  run: JobRun,
 ): Promise<JobOutcome> {
   const { gh, publisher } = deps;
-  const timeout = AbortSignal.timeout(deps.timeoutMs ?? 50 * 60_000);
+  const outer = run.signal;
+  let spent = 0;
+  const agent: AgentRunner = {
+    async run(request) {
+      const result = await deps.agent.run(request);
+      spent += result.costUsd;
+      run.recordSpend(result.costUsd);
+      return result;
+    },
+  };
+  const timeout = AbortSignal.timeout(deps.timeoutMs);
   const signal = AbortSignal.any([outer, timeout]);
   const log = (fields: Record<string, unknown>) =>
     deps.log({ pr: `${job.repo}#${job.prNumber}`, ...fields });
@@ -108,47 +139,72 @@ export async function runReviewJob(
       log({ msg: "head already reviewed; reviewing in full" });
     }
 
-    stage = "git";
-    log({ msg: "checking out", head: pr.head.sha, mode, diffBase });
-    await using workspace = await deps.openWorkspace({
-      cloneUrl: pr.base.repo.clone_url,
-      baseRef: pr.base.ref,
-      headSha: pr.head.sha,
-      diffBase,
-      gitEnv: await deps.gitEnv(),
-      signal,
-    });
-    stage = "review";
-    const result = await reviewChanges(
-      {
-        workspace,
-        title: pr.title,
-        description: pr.body ?? "",
-        priorFindings: priorFindings(prior),
+    const saved = run.saved as SavedReview | undefined;
+    let result: ReviewResult;
+    if (
+      saved?.headSha === pr.head.sha &&
+      saved.diffBase === diffBase &&
+      saved.mode === mode
+    ) {
+      log({ msg: "publishing the review an earlier attempt finished" });
+      result = saved.result;
+    } else {
+      stage = "git";
+      log({ msg: "checking out", head: pr.head.sha, mode, diffBase });
+      await using workspace = await openPullRequestWorkspace({
+        cloneUrl: pr.base.repo.clone_url,
+        baseRef: pr.base.ref,
+        headSha: pr.head.sha,
+        diffBase,
+        gitEnv: await deps.gitEnv(),
         signal,
-        log: (msg) => log({ msg }),
-      },
-      { agent: deps.agent, options: deps.reviewOptions },
-    );
-    signal.throwIfAborted();
-    log({
-      msg: "review complete",
-      findings: result.findings.length,
-      verification: result.verification,
-      costUsd: result.costUsd,
-    });
+      });
+      stage = "review";
+      result = await reviewChanges(
+        {
+          workspace,
+          title: pr.title,
+          description: pr.body ?? "",
+          priorFindings: priorFindings(prior),
+          signal,
+          log: (msg) => log({ msg }),
+        },
+        { agent, options: deps.reviewOptions },
+      );
+      run.save({ headSha: pr.head.sha, diffBase, mode, result } satisfies SavedReview);
+      signal.throwIfAborted();
+      log({
+        msg: "review complete",
+        findings: result.findings.length,
+        verification: result.verification,
+        costUsd: result.costUsd,
+      });
+    }
 
     stage = "publish";
     const report = buildReport(result, {
-      headSha: workspace.headSha,
+      headSha: pr.head.sha,
       mode,
       ...(prior ? { prior } : {}),
       maxInline: deps.maxInline,
+      trigger: deps.trigger,
     });
     await publisher.publish(report);
-    return { kind: "done", costUsd: result.costUsd };
+    return { kind: "done", costUsd: spent };
   } catch (error) {
     if (outer.aborted) throw error;
+    if (
+      error instanceof ReviewFailedError &&
+      error.failure === "usage_limit" &&
+      error.retryAt !== undefined &&
+      error.retryAt <= run.queuedAt + MAX_WAIT_MS
+    ) {
+      log({ level: "warn", msg: "waiting for Claude's usage limit to reset", until: new Date(error.retryAt).toISOString() });
+      await publisher
+        .waiting(error.retryAt, prior)
+        .catch((e) => log({ level: "error", msg: "couldn't report waiting", error: String(e) }));
+      return { kind: "waiting", until: error.retryAt, costUsd: spent };
+    }
     const reason: FailureReason = timeout.aborted
       ? "timeout"
       : error instanceof ReviewFailedError
@@ -161,7 +217,10 @@ export async function runReviewJob(
             ? "git"
             : "unknown";
     const transient =
-      reason === "git" || reason === "github" || reason === "unknown";
+      reason === "git" ||
+      reason === "github" ||
+      reason === "overloaded" ||
+      reason === "unknown";
     const message = error instanceof Error ? error.message : String(error);
     log({
       level: "error",
@@ -179,7 +238,6 @@ export async function runReviewJob(
           error: String(e),
         }),
       );
-    const costUsd = error instanceof ReviewFailedError ? error.costUsd : 0;
-    return { kind: "failed", reason, transient, error: message, costUsd };
+    return { kind: "failed", reason, transient, error: message, costUsd: spent };
   }
 }

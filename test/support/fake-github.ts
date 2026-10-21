@@ -12,7 +12,18 @@ export function fakeGitHub(opts: {
   prState?: string;
   rejectInline?: boolean;
   compare?: Record<string, string>;
+  /** Authenticated as this user (a PAT) rather than as the GitHub App with id 42. */
+  user?: string;
+  /** The first N summary comment writes fail with a 502. */
+  failCommentWrites?: number;
 }) {
+  let failWrites = opts.failCommentWrites ?? 0;
+  const maybeFailWrite = () => {
+    if (failWrites > 0) {
+      failWrites--;
+      throw new GitHubError(502, "Bad Gateway");
+    }
+  };
   const state = {
     head: opts.head,
     comments: [] as IssueComment[],
@@ -39,20 +50,25 @@ export function fakeGitHub(opts: {
           },
         } as T;
       }
+      if (route === "GET /user" && opts.user) return { login: opts.user } as T;
       if ((m = /^GET \/compare\/(\w+)\.\.\.(\w+)$/.exec(route))) {
         const status = opts.compare?.[`${m[1]}...${m[2]}`] ?? "ahead";
         return { status, merge_base_commit: { sha: m[1] } } as T;
       }
       if (route === "POST /issues/1/comments") {
-        const c = {
+        maybeFailWrite();
+        const c: IssueComment = {
           id: state.nextId++,
           body: body.body,
-          performed_via_github_app: { id: 42 },
+          ...(opts.user
+            ? { user: { login: opts.user, type: "User" } }
+            : { performed_via_github_app: { id: 42 } }),
         };
         state.comments.push(c);
         return c as T;
       }
       if ((m = /^PATCH \/issues\/comments\/(\d+)$/.exec(route))) {
+        maybeFailWrite();
         const c = state.comments.find((x) => x.id === Number(m![1]))!;
         c.body = body.body;
         return c as T;

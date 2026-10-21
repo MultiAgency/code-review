@@ -61,8 +61,10 @@ export interface Found {
 export interface Score<E, F> {
   hits: Array<{ expected: E; found: F }>;
   misses: E[];
+  /** Expected findings the judge couldn't answer for (it failed); left out of recall. */
+  unjudged: E[];
   extras: F[];
-  /** Share of expected findings matched. */
+  /** Share of judged expected findings matched. */
   recall: number;
   /**
    * Share of our findings that matched one. A lower bound: the labels can miss
@@ -103,18 +105,22 @@ export function score<E extends LedgerFinding, F extends Found>(
   return {
     hits,
     misses,
+    unjudged: [],
     extras,
     recall: expected.length ? hits.length / expected.length : 1,
     precision: found.length ? hits.length / found.length : 1,
   };
 }
 
-/** Decides which candidate, if any, reports the same defect as `expected`. */
+/**
+ * Decides which candidate, if any, reports the same defect as `expected`:
+ * its index, null for none, or "unjudged" when the judge itself failed.
+ */
 export interface SameDefectJudge {
   match<F extends Found>(
     expected: LedgerFinding,
     candidates: F[],
-  ): Promise<number | null>;
+  ): Promise<number | null | "unjudged">;
 }
 
 /**
@@ -131,6 +137,7 @@ export async function judgedScore<E extends LedgerFinding, F extends Found>(
   const used = new Set<number>();
   const hits: Array<{ expected: E; found: F }> = [];
   const misses: E[] = [];
+  const unjudged: E[] = [];
   for (const e of expected) {
     const open = found
       .map((f, i) => ({ f, i }))
@@ -141,6 +148,10 @@ export async function judgedScore<E extends LedgerFinding, F extends Found>(
           open.map(({ f }) => f),
         )
       : null;
+    if (pick === "unjudged") {
+      unjudged.push(e);
+      continue;
+    }
     const chosen =
       pick === null || !Number.isInteger(pick) ? undefined : open[pick];
     if (!chosen) misses.push(e);
@@ -150,11 +161,13 @@ export async function judgedScore<E extends LedgerFinding, F extends Found>(
     }
   }
   const extras = found.filter((_, i) => !used.has(i));
+  const judged = expected.length - unjudged.length;
   return {
     hits,
     misses,
+    unjudged,
     extras,
-    recall: expected.length ? hits.length / expected.length : 1,
+    recall: judged ? hits.length / judged : 1,
     precision: found.length ? hits.length / found.length : 1,
   };
 }
@@ -199,7 +212,7 @@ export function agentJudge(
         schema: Verdict,
         roots: [scratchDir],
       });
-      return result.ok ? result.data.match : null;
+      return result.ok ? result.data.match : "unjudged";
     },
   };
 }

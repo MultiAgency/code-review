@@ -12,8 +12,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseArgs, promisify } from "node:util";
-import { sdkAgentRunner } from "./agent.js";
-import { claudeTokens, loadConfig, reviewOptions } from "./config.js";
+import { loadConfigOrExit, reviewOptions } from "./config.js";
 import { agentRunnerFor } from "./token-pool.js";
 import {
   agentJudge,
@@ -57,11 +56,13 @@ if (!values.rescore && (!values.repo || !values.pr?.length)) {
   console.error("       backtest --rescore results.json [--line-window N]");
   process.exit(1);
 }
-const config = loadConfig();
+const config = loadConfigOrExit();
 const agent = agentRunnerFor(config, (f) => console.error(JSON.stringify(f)));
+// The judge runs on the same tokens as the reviews, with their rotation; a failed judge call leaves
+// the case unjudged (out of recall) rather than counting it as a miss.
 const judge = agentJudge(
-  sdkAgentRunner({
-    ...(claudeTokens(config)[0] ? { oauthToken: claudeTokens(config)[0] } : {}),
+  agentRunnerFor(config, (f) => console.error(JSON.stringify(f)), {
+    model: undefined,
     effort: "low",
     maxBudgetUsd: 0.5,
     maxTurns: 3,
@@ -92,6 +93,8 @@ function report(
     );
   for (const m of s.misses)
     console.log(`  missed ${m.id} ${m.path}:${m.line} ${m.gist ?? ""}`);
+  for (const u of s.unjudged)
+    console.log(`  unjudged ${u.id} ${u.path}:${u.line} (the judge failed; --resume asks again)`);
   for (const e of s.extras)
     console.log(`  extra  ${e.file}:${e.line} ${e.title}`);
 }
@@ -106,6 +109,7 @@ if (values.rescore) {
   }>;
   let expected = 0;
   let hits = 0;
+  let unjudged = 0;
   for (const r of saved) {
     const s = await scoreCase({ sha: r.sha, expected: r.expected }, r.findings);
     report(
@@ -115,10 +119,11 @@ if (values.rescore) {
       s,
       r.costUsd,
     );
-    expected += r.expected.length;
+    expected += r.expected.length - s.unjudged.length;
     hits += s.hits.length;
+    unjudged += s.unjudged.length;
   }
-  console.log(`\nTotal: recall ${hits}/${expected}.`);
+  console.log(`\nTotal: recall ${hits}/${expected}${unjudged ? `; ${unjudged} unjudged, left out` : ""}.`);
   process.exit(0);
 }
 const repo = values.repo!;
@@ -139,6 +144,12 @@ const results: Result[] =
   values.resume && values.out
     ? JSON.parse(await readFile(values.out, "utf8").catch(() => "[]"))
     : [];
+// Cases the judge couldn't answer last time are judged again.
+for (const r of results) {
+  if ((r.score as { unjudged?: unknown[] }).unjudged?.length)
+    r.score = await scoreCase({ sha: r.sha, expected: r.expected }, r.findings);
+}
+if (values.out && results.length) await writeFile(values.out, JSON.stringify(results, null, 2));
 const done = new Set(results.map((r) => `${r.pr}@${r.sha}`));
 const options = {
   ...reviewOptions(config),
@@ -257,12 +268,14 @@ await Promise.all(
   ),
 );
 
-const scored = results as Array<Result & { score: { hits: unknown[] } }>;
-const expectedTotal = scored.reduce((n, r) => n + r.expected.length, 0);
+const scored = results as Array<Result & { score: { hits: unknown[]; unjudged?: unknown[] } }>;
+const unjudgedTotal = scored.reduce((n, r) => n + (r.score.unjudged?.length ?? 0), 0);
+const expectedTotal = scored.reduce((n, r) => n + r.expected.length, 0) - unjudgedTotal;
 const hitTotal = scored.reduce((n, r) => n + r.score.hits.length, 0);
 const foundTotal = scored.reduce((n, r) => n + r.findings.length, 0);
 const costTotal = scored.reduce((n, r) => n + r.costUsd, 0);
 console.log(
   `\nTotal over ${scored.length} case(s): recall ${hitTotal}/${expectedTotal}${expectedTotal ? ` (${Math.round((100 * hitTotal) / expectedTotal)}%)` : ""}, ` +
+    `${unjudgedTotal ? `${unjudgedTotal} unjudged (left out; rerun with --resume), ` : ""}` +
     `${foundTotal} findings, $${costTotal.toFixed(2)}. "Extras" can be real bugs the labels missed: read them.`,
 );

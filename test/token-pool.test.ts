@@ -7,8 +7,8 @@ import { tokenPoolRunner } from "../src/token-pool.ts";
 const schema = z.object({ v: z.number() });
 const req = { prompt: "p", schema, roots: ["/tmp"] };
 const ok: AgentResult<{ v: number }> = { ok: true, data: { v: 1 }, costUsd: 0.1 };
-const limited: AgentResult<{ v: number }> = { ok: false, failure: "auth_or_limit", detail: "API error 429: session limit", costUsd: 0 };
-const rejected: AgentResult<{ v: number }> = { ok: false, failure: "auth_or_limit", detail: "API error 401: invalid token", costUsd: 0 };
+const limited: AgentResult<{ v: number }> = { ok: false, failure: "usage_limit", detail: "limit", costUsd: 0 };
+const rejected: AgentResult<{ v: number }> = { ok: false, failure: "auth_rejected", detail: "invalid token", costUsd: 0 };
 
 /** One scripted runner per token; records which token ran each request. */
 function fakeRunners(answers: Record<string, Array<AgentResult<{ v: number }>>>) {
@@ -65,7 +65,7 @@ test("when every token is resting, the limit failure is returned instead of loop
   const { make, used } = fakeRunners({ a: [limited], b: [limited] });
   const pool = tokenPoolRunner(["a", "b"], make, { limitCooldownMs: 60_000, now: () => 0 });
   const result = await pool.run(req);
-  assert.ok(!result.ok && result.failure === "auth_or_limit");
+  assert.ok(!result.ok && result.failure === "usage_limit" && result.retryAt === 60_000);
   assert.deepEqual(used, ["a", "b"]);
   const again = await pool.run(req);
   assert.ok(!again.ok && /all .*tokens/i.test(again.detail));
@@ -78,4 +78,31 @@ test("other failures are not retried on another token", async () => {
   const result = await tokenPoolRunner(["a", "b"], make).run(req);
   assert.ok(!result.ok && result.failure === "budget_exceeded");
   assert.deepEqual(used, ["a"]);
+});
+
+test("a token rests until the reset time Claude announced", async () => {
+  let clock = 0;
+  const { make, used } = fakeRunners({ a: [{ ...limited, retryAt: 5_000 }], b: [] });
+  const pool = tokenPoolRunner(["a", "b"], make, { limitCooldownMs: 60_000, now: () => clock });
+  await pool.run(req);
+  clock = 5_000;
+  await pool.run(req);
+  await pool.run(req);
+  assert.deepEqual(used, ["a", "b", "a", "b"]);
+});
+
+test("when every token was rejected, the failure says so rather than promising a reset", async () => {
+  const { make } = fakeRunners({ a: [rejected], b: [rejected] });
+  const result = await tokenPoolRunner(["a", "b"], make, { now: () => 0 }).run(req);
+  assert.ok(!result.ok && result.failure === "auth_rejected" && result.retryAt === undefined);
+});
+
+test("an overloaded API doesn't rotate or rest tokens", async () => {
+  const overloaded: AgentResult<{ v: number }> = { ok: false, failure: "overloaded", detail: "529", costUsd: 0 };
+  const { make, used } = fakeRunners({ a: [overloaded], b: [] });
+  const pool = tokenPoolRunner(["a", "b"], make);
+  assert.ok(!(await pool.run(req)).ok);
+  await pool.run(req);
+  await pool.run(req);
+  assert.deepEqual(used, ["a", "b", "a"]);
 });
