@@ -3,6 +3,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import type { AgentFailureKind, AgentRunner } from "./agent.js";
+import { mapLimited } from "./map-limited.js";
 import { place, type Placement } from "./placement.js";
 import { reviewPrompt, verifyPrompt } from "./prompts.js";
 import {
@@ -377,20 +378,6 @@ function applyVerdicts<F extends { category: string }>(
     }
   }
   return findings.filter((_, index) => !rejected.has(index));
-}
-
-/** Like Promise.all over `items`, with at most `limit` running at once; results keep their order. */
-async function mapLimited<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
-  const results: R[] = new Array(items.length);
-  let next = 0;
-  const worker = async () => {
-    while (next < items.length) {
-      const i = next++;
-      results[i] = await fn(items[i]!);
-    }
-  };
-  await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, worker));
-  return results;
 }
 
 /** Findings sometimes name files by absolute path or with a leading `./`. */
