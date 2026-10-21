@@ -18,155 +18,227 @@ export interface QueueOptions {
   log?: (fields: Record<string, unknown>) => void;
 }
 
-export interface ReviewQueue {
-  /** Persists a job. A redelivered webhook (same delivery id) is ignored. */
-  submit(job: ReviewJob, deliveryId: string): "queued" | "duplicate";
-  stats(): { running: number; queued: number };
-  /** Resolves when nothing is running or waiting to run. */
-  whenIdle(): Promise<void>;
-  /**
-   * Stops taking work, gives running jobs `graceMs` to finish, then aborts the
-   * rest. Aborted jobs stay queued and run again after the next start.
-   */
-  close(graceMs: number): Promise<void>;
+type Status = "queued" | "running" | "done" | "failed" | "superseded";
+
+interface ReadyRow {
+  id: number;
+  pr: string;
+  payload: string;
+  attempts: number;
 }
 
-type Status = "queued" | "running" | "done" | "failed" | "superseded";
+/** Review jobs and daily spend, persisted in SQLite. Knows nothing about running them. */
+class JobStore {
+  private readonly db: DatabaseSync;
+
+  constructor(
+    dbPath: string,
+    private readonly now: () => number,
+  ) {
+    this.db = new DatabaseSync(dbPath);
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS jobs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        pr TEXT NOT NULL,
+        delivery TEXT UNIQUE,
+        payload TEXT NOT NULL,
+        status TEXT NOT NULL,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        run_after INTEGER NOT NULL,
+        updated INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS jobs_status ON jobs (status, run_after);
+      CREATE TABLE IF NOT EXISTS spend (day TEXT PRIMARY KEY, usd REAL NOT NULL);
+    `);
+  }
+
+  /** A crash or an expired grace period left these mid-run: run them again. */
+  resumeInterrupted(): void {
+    this.db.prepare("UPDATE jobs SET status = 'queued' WHERE status = 'running'").run();
+  }
+
+  purgeFinishedBefore(time: number): void {
+    this.db.prepare("DELETE FROM jobs WHERE status IN ('done', 'failed', 'superseded') AND updated < ?").run(time);
+  }
+
+  /** The new job's id, or undefined when this delivery was already stored. */
+  insert(pr: string, deliveryId: string, job: ReviewJob): number | undefined {
+    const inserted = this.db
+      .prepare(
+        `INSERT INTO jobs (pr, delivery, payload, status, run_after, updated)
+         VALUES (?, ?, ?, 'queued', ?, ?) ON CONFLICT (delivery) DO NOTHING`,
+      )
+      .run(pr, deliveryId, JSON.stringify(job), this.now(), this.now());
+    return inserted.changes === 0 ? undefined : Number(inserted.lastInsertRowid);
+  }
+
+  /** Marks older waiting or running jobs for the same PR as superseded. */
+  supersedeOlder(pr: string, id: number): void {
+    this.db
+      .prepare("UPDATE jobs SET status = 'superseded', updated = ? WHERE pr = ? AND id < ? AND status IN ('queued', 'running')")
+      .run(this.now(), pr, id);
+  }
+
+  /** Queued jobs whose retry time has come, oldest first. */
+  ready(): ReadyRow[] {
+    return this.db
+      .prepare("SELECT id, pr, payload, attempts FROM jobs WHERE status = 'queued' AND run_after <= ? ORDER BY id")
+      .all(this.now()) as unknown as ReadyRow[];
+  }
+
+  markRunning(id: number): void {
+    this.db.prepare("UPDATE jobs SET status = 'running', attempts = attempts + 1, updated = ? WHERE id = ?").run(this.now(), id);
+  }
+
+  status(id: number): Status | undefined {
+    return (this.db.prepare("SELECT status FROM jobs WHERE id = ?").get(id) as { status: Status } | undefined)?.status;
+  }
+
+  setStatus(id: number, status: Status): void {
+    this.db.prepare("UPDATE jobs SET status = ?, updated = ? WHERE id = ?").run(status, this.now(), id);
+  }
+
+  retryAt(id: number, runAfter: number): void {
+    this.db.prepare("UPDATE jobs SET status = 'queued', run_after = ?, updated = ? WHERE id = ?").run(runAfter, this.now(), id);
+  }
+
+  /** Back to the queue without using up an attempt (the job was interrupted, not failed). */
+  requeueInterrupted(id: number): void {
+    this.db.prepare("UPDATE jobs SET status = 'queued', attempts = attempts - 1, updated = ? WHERE id = ?").run(this.now(), id);
+  }
+
+  queuedCount(): number {
+    return Number((this.db.prepare("SELECT count(*) AS n FROM jobs WHERE status = 'queued'").get() as { n: number }).n);
+  }
+
+  today(): string {
+    return new Date(this.now()).toISOString().slice(0, 10);
+  }
+
+  spentToday(): number {
+    return (this.db.prepare("SELECT usd FROM spend WHERE day = ?").get(this.today()) as { usd: number } | undefined)?.usd ?? 0;
+  }
+
+  addSpend(usd: number): void {
+    if (usd <= 0) return;
+    this.db
+      .prepare("INSERT INTO spend (day, usd) VALUES (?, ?) ON CONFLICT (day) DO UPDATE SET usd = usd + excluded.usd")
+      .run(this.today(), usd);
+  }
+
+  close(): void {
+    this.db.close();
+  }
+}
 
 /**
  * Review jobs, persisted so a deploy or crash doesn't lose them. Runs up to
  * `concurrency` at once; a newer job for the same PR supersedes an older one.
  * Resumes queued and interrupted jobs on start.
  */
-export function openReviewQueue(
-  work: Work,
-  options: QueueOptions,
-): ReviewQueue {
-  const db = new DatabaseSync(options.dbPath);
-  const log = options.log ?? (() => {});
-  const backoff =
-    options.backoffMs ?? ((attempt) => 30_000 * 4 ** (attempt - 1));
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS jobs (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      pr TEXT NOT NULL,
-      delivery TEXT UNIQUE,
-      payload TEXT NOT NULL,
-      status TEXT NOT NULL,
-      attempts INTEGER NOT NULL DEFAULT 0,
-      run_after INTEGER NOT NULL,
-      updated INTEGER NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS jobs_status ON jobs (status, run_after);
-    CREATE TABLE IF NOT EXISTS spend (day TEXT PRIMARY KEY, usd REAL NOT NULL);
-  `);
-  const now = options.now ?? (() => Date.now());
-  const today = () => new Date(now()).toISOString().slice(0, 10);
-  const spentToday = () =>
-    (
-      db.prepare("SELECT usd FROM spend WHERE day = ?").get(today()) as
-        { usd: number } | undefined
-    )?.usd ?? 0;
-  const addSpend = (usd: number) => {
-    if (usd > 0) {
-      db.prepare(
-        "INSERT INTO spend (day, usd) VALUES (?, ?) ON CONFLICT (day) DO UPDATE SET usd = usd + excluded.usd",
-      ).run(today(), usd);
+export class ReviewQueue {
+  private readonly store: JobStore;
+  private readonly now: () => number;
+  private readonly log: (fields: Record<string, unknown>) => void;
+  private readonly backoff: (attempt: number) => number;
+  private readonly running = new Map<number, { pr: string; controller: AbortController; done: Promise<void> }>();
+  private readonly idleWaiters: Array<() => void> = [];
+  private readonly timer: NodeJS.Timeout;
+  private closing = false;
+  private capLoggedOn = "";
+
+  constructor(
+    private readonly work: Work,
+    private readonly options: QueueOptions,
+  ) {
+    this.now = options.now ?? (() => Date.now());
+    this.log = options.log ?? (() => {});
+    this.backoff = options.backoffMs ?? ((attempt) => 30_000 * 4 ** (attempt - 1));
+    this.store = new JobStore(options.dbPath, this.now);
+    this.store.resumeInterrupted();
+    this.store.purgeFinishedBefore(this.now() - 7 * 864e5);
+    this.timer = setInterval(this.pump, options.pollMs ?? 1000);
+    this.timer.unref();
+    setImmediate(this.pump);
+  }
+
+  /** Persists a job. A redelivered webhook (same delivery id) is ignored. */
+  submit(job: ReviewJob, deliveryId: string): "queued" | "duplicate" {
+    const pr = `${job.repo}#${job.prNumber}`;
+    const id = this.store.insert(pr, deliveryId, job);
+    if (id === undefined) return "duplicate";
+    // Newest request wins: drop older waiting jobs for this PR and stop a running one.
+    this.store.supersedeOlder(pr, id);
+    for (const [rid, r] of this.running) {
+      if (r.pr === pr && rid !== id) r.controller.abort(new Error("superseded"));
     }
-  };
-  let capLogged = "";
-  // A crash or an expired grace period left these mid-run: run them again.
-  db.prepare(
-    "UPDATE jobs SET status = 'queued' WHERE status = 'running'",
-  ).run();
-  db.prepare(
-    "DELETE FROM jobs WHERE status IN ('done', 'failed', 'superseded') AND updated < ?",
-  ).run(now() - 7 * 864e5);
-
-  const setStatus = db.prepare(
-    "UPDATE jobs SET status = ?, updated = ? WHERE id = ?",
-  );
-  const running = new Map<
-    number,
-    { pr: string; controller: AbortController; done: Promise<void> }
-  >();
-  const idleWaiters: Array<() => void> = [];
-  let closing = false;
-
-  const keyOf = (job: ReviewJob) => `${job.repo}#${job.prNumber}`;
-
-  function queuedCount(): number {
-    return Number(
-      (
-        db
-          .prepare("SELECT count(*) AS n FROM jobs WHERE status = 'queued'")
-          .get() as { n: number }
-      ).n,
-    );
+    setImmediate(this.pump);
+    return "queued";
   }
 
-  function checkIdle() {
-    if (running.size === 0 && queuedCount() === 0)
-      idleWaiters.splice(0).forEach((resolve) => resolve());
+  stats(): { running: number; queued: number } {
+    return { running: this.running.size, queued: this.store.queuedCount() };
   }
 
-  function pump() {
-    if (closing) return;
-    if (
-      options.dailyBudgetUsd !== undefined &&
-      spentToday() >= options.dailyBudgetUsd
-    ) {
-      if (capLogged !== today()) {
-        capLogged = today();
-        log({
+  /** Resolves when nothing is running or waiting to run. */
+  whenIdle(): Promise<void> {
+    return new Promise((resolve) => {
+      this.idleWaiters.push(resolve);
+      this.checkIdle();
+    });
+  }
+
+  /**
+   * Stops taking work, gives running jobs `graceMs` to finish, then aborts the
+   * rest. Aborted jobs stay queued and run again after the next start.
+   */
+  async close(graceMs: number): Promise<void> {
+    this.closing = true;
+    clearInterval(this.timer);
+    const all = Promise.all([...this.running.values()].map((r) => r.done));
+    const grace = new Promise((resolve) => setTimeout(resolve, graceMs).unref());
+    await Promise.race([all, grace]);
+    for (const r of this.running.values()) r.controller.abort(new Error("shutdown"));
+    await all;
+    this.store.close();
+  }
+
+  // An arrow property, so it can be handed to timers without binding.
+  private readonly pump = (): void => {
+    if (this.closing) return;
+    if (this.options.dailyBudgetUsd !== undefined && this.store.spentToday() >= this.options.dailyBudgetUsd) {
+      if (this.capLoggedOn !== this.store.today()) {
+        this.capLoggedOn = this.store.today();
+        this.log({
           level: "warn",
           msg: "daily review budget reached; queued reviews wait until tomorrow (UTC)",
-          spentUsd: spentToday(),
+          spentUsd: this.store.spentToday(),
         });
       }
       return;
     }
-    const ready = db
-      .prepare(
-        "SELECT id, pr, payload, attempts FROM jobs WHERE status = 'queued' AND run_after <= ? ORDER BY id",
-      )
-      .all(now()) as Array<{
-      id: number;
-      pr: string;
-      payload: string;
-      attempts: number;
-    }>;
-    for (const row of ready) {
-      if (running.size >= options.concurrency) break;
+    for (const row of this.store.ready()) {
+      if (this.running.size >= this.options.concurrency) break;
       // One job per PR at a time, including one still unwinding after being superseded,
       // so a stale review can never post after a newer one starts.
-      if ([...running.values()].some((r) => r.pr === row.pr)) continue;
-      db.prepare(
-        "UPDATE jobs SET status = 'running', attempts = attempts + 1, updated = ? WHERE id = ?",
-      ).run(now(), row.id);
-      start(
-        row.id,
-        row.pr,
-        JSON.parse(row.payload) as ReviewJob,
-        row.attempts + 1,
-      );
+      if ([...this.running.values()].some((r) => r.pr === row.pr)) continue;
+      this.store.markRunning(row.id);
+      this.start(row.id, row.pr, JSON.parse(row.payload) as ReviewJob, row.attempts + 1);
     }
-    checkIdle();
-  }
+    this.checkIdle();
+  };
 
-  function start(id: number, pr: string, job: ReviewJob, attempt: number) {
+  private start(id: number, pr: string, job: ReviewJob, attempt: number): void {
     const controller = new AbortController();
     const done = (async () => {
       let next: Status = "done";
       try {
-        const outcome = await work(job, controller.signal);
-        addSpend(outcome.kind === "skipped" ? 0 : (outcome.costUsd ?? 0));
-        log({ pr, msg: "job finished", attempt, ...outcome });
+        const outcome = await this.work(job, controller.signal);
+        this.store.addSpend(outcome.kind === "skipped" ? 0 : (outcome.costUsd ?? 0));
+        this.log({ pr, msg: "job finished", attempt, ...outcome });
         if (outcome.kind === "failed") {
-          if (outcome.transient && attempt < options.maxAttempts) {
-            db.prepare(
-              "UPDATE jobs SET status = 'queued', run_after = ?, updated = ? WHERE id = ?",
-            ).run(now() + backoff(attempt), now(), id);
+          if (outcome.transient && attempt < this.options.maxAttempts) {
+            this.store.retryAt(id, this.now() + this.backoff(attempt));
             return;
           }
           next = "failed";
@@ -174,83 +246,27 @@ export function openReviewQueue(
       } catch (error) {
         if (controller.signal.aborted) {
           // Superseded jobs were already marked; shutdown leaves the job queued to resume.
-          if (closing && current(id) === "running") {
-            db.prepare(
-              "UPDATE jobs SET status = 'queued', attempts = attempts - 1, updated = ? WHERE id = ?",
-            ).run(now(), id);
-          }
+          if (this.closing && this.store.status(id) === "running") this.store.requeueInterrupted(id);
           return;
         }
-        log({
-          pr,
-          level: "error",
-          msg: "job crashed",
-          error: error instanceof Error ? error.message : String(error),
-        });
+        this.log({ pr, level: "error", msg: "job crashed", error: error instanceof Error ? error.message : String(error) });
         next = "failed";
       } finally {
-        running.delete(id);
-        setImmediate(pump);
+        this.running.delete(id);
+        setImmediate(this.pump);
       }
-      if (current(id) === "running") setStatus.run(next, now(), id);
+      if (this.store.status(id) === "running") this.store.setStatus(id, next);
     })();
-    running.set(id, { pr, controller, done });
+    this.running.set(id, { pr, controller, done });
   }
 
-  function current(id: number): Status | undefined {
-    return (
-      db.prepare("SELECT status FROM jobs WHERE id = ?").get(id) as
-        { status: Status } | undefined
-    )?.status;
+  private checkIdle(): void {
+    if (this.running.size === 0 && this.store.queuedCount() === 0) {
+      this.idleWaiters.splice(0).forEach((resolve) => resolve());
+    }
   }
+}
 
-  const timer = setInterval(pump, options.pollMs ?? 1000);
-  timer.unref();
-  setImmediate(pump);
-
-  return {
-    submit(job, deliveryId) {
-      const pr = keyOf(job);
-      const inserted = db
-        .prepare(
-          `INSERT INTO jobs (pr, delivery, payload, status, run_after, updated)
-           VALUES (?, ?, ?, 'queued', ?, ?) ON CONFLICT (delivery) DO NOTHING`,
-        )
-        .run(pr, deliveryId, JSON.stringify(job), now(), now());
-      if (inserted.changes === 0) return "duplicate";
-      const id = Number(inserted.lastInsertRowid);
-      // Newest request wins: drop older waiting jobs for this PR and stop a running one.
-      db.prepare(
-        "UPDATE jobs SET status = 'superseded', updated = ? WHERE pr = ? AND id < ? AND status IN ('queued', 'running')",
-      ).run(now(), pr, id);
-      for (const [rid, r] of running) {
-        if (r.pr === pr && rid !== id)
-          r.controller.abort(new Error("superseded"));
-      }
-      setImmediate(pump);
-      return "queued";
-    },
-    stats() {
-      return { running: running.size, queued: queuedCount() };
-    },
-    whenIdle() {
-      return new Promise((resolve) => {
-        idleWaiters.push(resolve);
-        checkIdle();
-      });
-    },
-    async close(graceMs) {
-      closing = true;
-      clearInterval(timer);
-      const all = Promise.all([...running.values()].map((r) => r.done));
-      const grace = new Promise((resolve) =>
-        setTimeout(resolve, graceMs).unref(),
-      );
-      await Promise.race([all, grace]);
-      for (const r of running.values())
-        r.controller.abort(new Error("shutdown"));
-      await all;
-      db.close();
-    },
-  };
+export function openReviewQueue(work: Work, options: QueueOptions): ReviewQueue {
+  return new ReviewQueue(work, options);
 }

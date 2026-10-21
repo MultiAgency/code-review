@@ -248,3 +248,17 @@ test("instruction imports skip symlinks and stop at size and depth limits", asyn
     `depth not capped: ${names.join(",")}`,
   );
 });
+
+test("await using removes the checkout even when the review throws", async () => {
+  const repo = gitRepo();
+  const base = repo.commit({ "a.ts": "1\n" });
+  const head = repo.commit({ "a.ts": "1\n2\n" });
+  let workDir = "";
+  await assert.rejects(async () => {
+    await using ws = await openLocalWorkspace({ repoDir: repo.dir, base, head });
+    workDir = ws.workDir;
+    throw new Error("review failed");
+  }, /review failed/);
+  assert.ok(workDir && !existsSync(workDir));
+  assert.doesNotMatch(repo.git("worktree", "list"), /pr-review-/);
+});

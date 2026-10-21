@@ -110,7 +110,7 @@ export async function runReviewJob(
 
     stage = "git";
     log({ msg: "checking out", head: pr.head.sha, mode, diffBase });
-    const workspace = await deps.openWorkspace({
+    await using workspace = await deps.openWorkspace({
       cloneUrl: pr.base.repo.clone_url,
       baseRef: pr.base.ref,
       headSha: pr.head.sha,
@@ -118,39 +118,35 @@ export async function runReviewJob(
       gitEnv: await deps.gitEnv(),
       signal,
     });
-    try {
-      stage = "review";
-      const result = await reviewChanges(
-        {
-          workspace,
-          title: pr.title,
-          description: pr.body ?? "",
-          priorFindings: priorFindings(prior),
-          signal,
-          log: (msg) => log({ msg }),
-        },
-        { agent: deps.agent, options: deps.reviewOptions },
-      );
-      signal.throwIfAborted();
-      log({
-        msg: "review complete",
-        findings: result.findings.length,
-        verification: result.verification,
-        costUsd: result.costUsd,
-      });
+    stage = "review";
+    const result = await reviewChanges(
+      {
+        workspace,
+        title: pr.title,
+        description: pr.body ?? "",
+        priorFindings: priorFindings(prior),
+        signal,
+        log: (msg) => log({ msg }),
+      },
+      { agent: deps.agent, options: deps.reviewOptions },
+    );
+    signal.throwIfAborted();
+    log({
+      msg: "review complete",
+      findings: result.findings.length,
+      verification: result.verification,
+      costUsd: result.costUsd,
+    });
 
-      stage = "publish";
-      const report = buildReport(result, {
-        headSha: workspace.headSha,
-        mode,
-        ...(prior ? { prior } : {}),
-        maxInline: deps.maxInline,
-      });
-      await publisher.publish(report);
-      return { kind: "done", costUsd: result.costUsd };
-    } finally {
-      await workspace.dispose();
-    }
+    stage = "publish";
+    const report = buildReport(result, {
+      headSha: workspace.headSha,
+      mode,
+      ...(prior ? { prior } : {}),
+      maxInline: deps.maxInline,
+    });
+    await publisher.publish(report);
+    return { kind: "done", costUsd: result.costUsd };
   } catch (error) {
     if (outer.aborted) throw error;
     const reason: FailureReason = timeout.aborted

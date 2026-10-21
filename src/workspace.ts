@@ -26,9 +26,10 @@ export interface Diff {
 
 /**
  * Everything a review needs from git. The agent reads `repoDir` (the reviewed
- * head) and `workDir` (scratch); nothing else.
+ * head) and `workDir` (scratch); nothing else. Disposing it (`await using`, or
+ * `dispose()`) removes both.
  */
-export interface Workspace {
+export interface Workspace extends AsyncDisposable {
   readonly repoDir: string;
   readonly workDir: string;
   /** The commit under review. */
@@ -135,7 +136,7 @@ export async function openPullRequestWorkspace(opts: {
     await rm(workDir, { recursive: true, force: true });
     throw error;
   }
-  return makeWorkspace({
+  return new GitWorkspace({
     repoDir,
     workDir,
     headSha: opts.headSha,
@@ -177,7 +178,7 @@ export async function openLocalWorkspace(opts: {
     repoDir,
     headSha,
   ]);
-  return makeWorkspace({
+  return new GitWorkspace({
     repoDir,
     workDir,
     headSha,
@@ -194,87 +195,81 @@ export async function openLocalWorkspace(opts: {
   });
 }
 
-function makeWorkspace(w: {
-  repoDir: string;
-  workDir: string;
-  headSha: string;
-  diffArgs: string[];
-  range: string;
-  instructionsRef: string;
-  gitOpts: GitOptions;
-  dispose: () => Promise<void>;
-}): Workspace {
-  return {
-    repoDir: w.repoDir,
-    workDir: w.workDir,
-    headSha: w.headSha,
-    range: w.range,
-    async diff() {
-      const all = parseNameStatus(
-        await git(
-          w.repoDir,
-          ["diff", "--name-status", "-z", "-M", ...w.diffArgs],
-          w.gitOpts,
-        ),
-      );
-      const kept = parseNameStatus(
-        await git(
-          w.repoDir,
-          [
-            "diff",
-            "--name-status",
-            "-z",
-            "-M",
-            ...w.diffArgs,
-            "--",
-            ".",
-            ...EXCLUDES,
-          ],
-          w.gitOpts,
-        ),
-      );
-      const keptPaths = new Set(kept.map((f) => f.path));
-      const text = await git(
-        w.repoDir,
-        ["diff", ...DIFF_FLAGS, ...w.diffArgs, "--", ".", ...EXCLUDES],
-        w.gitOpts,
-      );
-      return {
-        text,
-        files: kept,
-        skipped: all.filter((f) => !keptPaths.has(f.path)).map((f) => f.path),
-        commentable: commentableLines(text),
-      };
-    },
-    async instructions() {
-      const found: Array<{ name: string; text: string }> = [];
-      const seen = new Set<string>();
-      let total = 0;
-      const visit = async (path: string, depth: number): Promise<void> => {
-        if (seen.has(path) || depth > MAX_IMPORT_DEPTH) return;
-        seen.add(path);
-        const text = await readRegularFile(
-          w.repoDir,
-          w.instructionsRef,
-          path,
-          w.gitOpts,
-        );
-        if (
-          !text?.trim() ||
-          text.length > MAX_INSTRUCTION_FILE ||
-          total + text.length > MAX_INSTRUCTIONS
-        )
-          return;
-        total += text.length;
-        found.push({ name: path, text: text.trim() });
-        for (const target of importsOf(text, path))
-          await visit(target, depth + 1);
-      };
-      for (const name of ["CLAUDE.md", "REVIEW.md"]) await visit(name, 0);
-      return found;
-    },
-    dispose: w.dispose,
-  };
+/** A checked-out commit plus the git facts a review needs; owns its temporary directories. */
+class GitWorkspace implements Workspace {
+  readonly repoDir: string;
+  readonly workDir: string;
+  readonly headSha: string;
+  readonly range: string;
+  private readonly diffArgs: string[];
+  private readonly instructionsRef: string;
+  private readonly gitOpts: GitOptions;
+  private readonly cleanup: () => Promise<void>;
+  private disposed: Promise<void> | undefined;
+
+  constructor(w: {
+    repoDir: string;
+    workDir: string;
+    headSha: string;
+    diffArgs: string[];
+    range: string;
+    instructionsRef: string;
+    gitOpts: GitOptions;
+    dispose: () => Promise<void>;
+  }) {
+    this.repoDir = w.repoDir;
+    this.workDir = w.workDir;
+    this.headSha = w.headSha;
+    this.range = w.range;
+    this.diffArgs = w.diffArgs;
+    this.instructionsRef = w.instructionsRef;
+    this.gitOpts = w.gitOpts;
+    this.cleanup = w.dispose;
+  }
+
+  async diff(): Promise<Diff> {
+    const all = parseNameStatus(
+      await git(this.repoDir, ["diff", "--name-status", "-z", "-M", ...this.diffArgs], this.gitOpts),
+    );
+    const kept = parseNameStatus(
+      await git(this.repoDir, ["diff", "--name-status", "-z", "-M", ...this.diffArgs, "--", ".", ...EXCLUDES], this.gitOpts),
+    );
+    const keptPaths = new Set(kept.map((f) => f.path));
+    const text = await git(this.repoDir, ["diff", ...DIFF_FLAGS, ...this.diffArgs, "--", ".", ...EXCLUDES], this.gitOpts);
+    return {
+      text,
+      files: kept,
+      skipped: all.filter((f) => !keptPaths.has(f.path)).map((f) => f.path),
+      commentable: commentableLines(text),
+    };
+  }
+
+  async instructions(): Promise<Array<{ name: string; text: string }>> {
+    const found: Array<{ name: string; text: string }> = [];
+    const seen = new Set<string>();
+    let total = 0;
+    const visit = async (path: string, depth: number): Promise<void> => {
+      if (seen.has(path) || depth > MAX_IMPORT_DEPTH) return;
+      seen.add(path);
+      const text = await readRegularFile(this.repoDir, this.instructionsRef, path, this.gitOpts);
+      if (!text?.trim() || text.length > MAX_INSTRUCTION_FILE || total + text.length > MAX_INSTRUCTIONS) return;
+      total += text.length;
+      found.push({ name: path, text: text.trim() });
+      for (const target of importsOf(text, path)) await visit(target, depth + 1);
+    };
+    for (const name of ["CLAUDE.md", "REVIEW.md"]) await visit(name, 0);
+    return found;
+  }
+
+  /** Removes the checkout; safe to call more than once. */
+  dispose(): Promise<void> {
+    this.disposed ??= this.cleanup();
+    return this.disposed;
+  }
+
+  [Symbol.asyncDispose](): Promise<void> {
+    return this.dispose();
+  }
 }
 
 const MAX_IMPORT_DEPTH = 4;
