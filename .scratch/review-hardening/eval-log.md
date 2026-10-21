@@ -61,3 +61,7 @@ cases, 39 labels, 36 valid after audit). PRs that are also in the held-out set w
 | 1 pass + focused Compliance pass | 31/36 (86%) | 4/7 | 22/22 | 67 | $17.27 |
 
 One run each (the first attempt was cut off by the usage limit and resumed with `--resume`).
+
+Held-out with the Compliance pass: valid 8/16 (50%), Compliance 7/11 (unchanged), findings on 2 of 5
+clean PRs, $16.24 — worse than the 1-pass baseline (11/16), so rejected. Third tuning gain (after 2
+samples and `xhigh`) that didn't generalise; held-out valid recall stays ~68% across configurations.
