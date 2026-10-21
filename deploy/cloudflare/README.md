@@ -5,7 +5,7 @@ built from the repo's `Dockerfile` (one `standard-1` instance, on the MultiAgenc
 keeps the container up while reviews are running or queued; once idle it sleeps after 10 minutes.
 
 - Webhook URL: `https://claude-pr-review.multidaomensional.workers.dev/webhook`
-- Settings: `cloudflare.config.ts` (`POST_REVIEWS`, `ALLOWED_REPOS`, `REVIEW_MODEL`, …)
+- Settings: `cloudflare.config.ts` (`POST_REVIEWS=true`, `REVIEW_MODEL`, …). Repositories: wherever the GitHub App is installed
 - Secrets: a local file, never committed, with `GITHUB_WEBHOOK_SECRET`, `GITHUB_APP_ID`,
   `GITHUB_APP_PRIVATE_KEY` (newlines written as `\n`) and `CLAUDE_CODE_OAUTH_TOKEN`.
 

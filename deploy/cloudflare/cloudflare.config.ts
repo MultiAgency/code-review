@@ -28,9 +28,9 @@ export default defineConfig({
       GITHUB_APP_ID: bindings.secret(),
       GITHUB_APP_PRIVATE_KEY: bindings.secret(),
       CLAUDE_CODE_OAUTH_TOKEN: bindings.secret(),
-      // Shadow pilot: log reviews instead of posting them, on one repository, with the model pinned.
-      POST_REVIEWS: bindings.text("false"),
-      ALLOWED_REPOS: bindings.text("MultiAgency/near-agencies"),
+      // Post reviews on PRs, with the model pinned. Which repositories are reviewed is decided by
+      // where the GitHub App is installed (no ALLOWED_REPOS).
+      POST_REVIEWS: bindings.text("true"),
       REVIEW_MODEL: bindings.text("claude-opus-5-5"),
       // Leave the platform's stop signal time to finish or requeue running reviews.
       SHUTDOWN_GRACE_SECONDS: bindings.text("25"),
