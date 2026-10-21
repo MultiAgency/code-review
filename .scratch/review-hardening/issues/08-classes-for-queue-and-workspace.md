@@ -2,7 +2,7 @@
 
 Status: needs-triage
 Type: task
-Blocked by: 09
+Blocked by: none (09 done)
 
 - Split the review queue into a `JobStore` (SQLite: jobs, spend) and a `ReviewQueue` class (scheduler: concurrency, newest-wins, retries, daily cap, close). Same `ReviewQueue` interface.
 - `Workspace` as a class implementing `Symbol.asyncDispose`; `openPullRequestWorkspace` / `openLocalWorkspace` stay as the constructors' front doors; callers move to `await using`.
