@@ -13,7 +13,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseArgs, promisify } from "node:util";
 import { sdkAgentRunner } from "./agent.js";
-import { agentOptions, loadConfig, reviewOptions } from "./config.js";
+import { claudeTokens, loadConfig, reviewOptions } from "./config.js";
+import { agentRunnerFor } from "./token-pool.js";
 import {
   agentJudge,
   judgedScore,
@@ -57,9 +58,10 @@ if (!values.rescore && (!values.repo || !values.pr?.length)) {
   process.exit(1);
 }
 const config = loadConfig();
-const agent = sdkAgentRunner(agentOptions(config));
+const agent = agentRunnerFor(config, (f) => console.error(JSON.stringify(f)));
 const judge = agentJudge(
   sdkAgentRunner({
+    ...(claudeTokens(config)[0] ? { oauthToken: claudeTokens(config)[0] } : {}),
     effort: "low",
     maxBudgetUsd: 0.5,
     maxTurns: 3,

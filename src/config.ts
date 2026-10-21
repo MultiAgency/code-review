@@ -89,6 +89,12 @@ const Env = z.object({
   // On SIGTERM, how long running reviews get to finish before they're re-queued.
   SHUTDOWN_GRACE_SECONDS: num(25, (s) => s.min(0)),
 
+  // Claude subscription tokens: one (CLAUDE_CODE_OAUTH_TOKEN) or several, comma- or
+  // newline-separated (CLAUDE_CODE_OAUTH_TOKENS). Several rotate across reviews.
+  CLAUDE_CODE_OAUTH_TOKEN: optionalText,
+  CLAUDE_CODE_OAUTH_TOKENS: optionalText,
+  // How long a token rests after hitting its usage limit before it's tried again.
+  CLAUDE_TOKEN_COOLDOWN_MIN: num(60, (s) => s.positive()),
   GITHUB_WEBHOOK_SECRET: optionalText,
   // Comma-separated owner/repo list; empty means every repo the app is installed on.
   ALLOWED_REPOS: z
@@ -166,4 +172,12 @@ export function reviewOptions(config: Config): ReviewOptions {
     samples: config.REVIEW_SAMPLES,
     extraPasses: config.REVIEW_EXTRA_PASSES,
   };
+}
+
+/** Every configured Claude token, in order, without duplicates. */
+export function claudeTokens(config: Config): string[] {
+  const all = [config.CLAUDE_CODE_OAUTH_TOKEN, ...(config.CLAUDE_CODE_OAUTH_TOKENS ?? "").split(/[,\n]/)]
+    .map((t) => t?.trim())
+    .filter((t): t is string => Boolean(t));
+  return [...new Set(all)];
 }

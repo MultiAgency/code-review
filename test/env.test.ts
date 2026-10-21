@@ -63,3 +63,13 @@ test("git sees neither model nor GitHub credentials, nor host config", () => {
     },
   );
 });
+
+test("a token list never reaches Claude, and each token in it is redacted", async () => {
+  const { redactSecrets } = await import("../src/env.ts");
+  withEnv({ CLAUDE_CODE_OAUTH_TOKENS: "sk-ant-oat-first-123456,sk-ant-oat-second-654321" }, () => {
+    assert.equal(claudeEnv().CLAUDE_CODE_OAUTH_TOKENS, undefined);
+    assert.equal(claudeEnv("sk-ant-oat-second-654321").CLAUDE_CODE_OAUTH_TOKEN, "sk-ant-oat-second-654321");
+    const out = redactSecrets("leaked sk-ant-oat-second-654321 and sk-ant-oat-first-123456");
+    assert.doesNotMatch(out, /sk-ant-oat/);
+  });
+});

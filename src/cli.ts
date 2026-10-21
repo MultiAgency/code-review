@@ -2,16 +2,15 @@
 // Prints the review; never posts anywhere. Exits 2 when a high-severity finding is reported.
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { sdkAgentRunner } from "./agent.js";
 import {
-  agentOptions,
   ConfigError,
   loadConfig,
   reviewOptions,
   type Config,
 } from "./config.js";
 import { buildReport } from "./report.js";
-import { reviewChanges } from "./review.js";
+import { ReviewFailedError, reviewChanges } from "./review.js";
+import { agentRunnerFor } from "./token-pool.js";
 import { openLocalWorkspace } from "./workspace.js";
 
 const { values } = parseArgs({
@@ -40,10 +39,14 @@ await using workspace = await openLocalWorkspace({
 const result = await reviewChanges(
   { workspace, log: (msg) => console.error(`[claude-pr-review] ${msg}`) },
   {
-    agent: sdkAgentRunner(agentOptions(config)),
+    agent: agentRunnerFor(config, (f) => console.error(`[claude-pr-review] ${JSON.stringify(f)}`)),
     options: reviewOptions(config),
   },
-);
+).catch((error: unknown) => {
+  if (!(error instanceof ReviewFailedError)) throw error;
+  console.error(`[claude-pr-review] ${error.message}`);
+  process.exit(1);
+});
 // Same rendering the service posts, with every finding in the summary.
 const report = buildReport(result, {
   headSha: workspace.headSha,

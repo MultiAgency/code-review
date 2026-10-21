@@ -3,12 +3,12 @@
 // Exercises the GitHub API, the shallow fetch with token auth, the commits API, the review and the
 // report, then prints what would be posted (log publisher). Never posts.
 import { parseArgs } from "node:util";
-import { sdkAgentRunner } from "./agent.js";
-import { agentOptions, loadConfig, reviewOptions } from "./config.js";
+import { loadConfig, reviewOptions } from "./config.js";
 import { gitAuthEnv } from "./env.js";
 import { githubClient, installationToken } from "./github.js";
 import { runReviewJob } from "./job.js";
 import { logPublisher } from "./publisher.js";
+import { agentRunnerFor } from "./token-pool.js";
 import { openPullRequestWorkspace } from "./workspace.js";
 
 const { values } = parseArgs({
@@ -38,7 +38,7 @@ const outcome = await runReviewJob(
     full: true,
   },
   {
-    agent: sdkAgentRunner(agentOptions(config)),
+    agent: agentRunnerFor(config, (f) => console.error(JSON.stringify(f))),
     reviewOptions: reviewOptions(config),
     maxInline: config.REVIEW_MAX_INLINE_COMMENTS,
     gh,

@@ -94,3 +94,11 @@ test("one review pass is the default; REVIEW_SINGLE_PASS=false runs one per REVI
     false,
   );
 });
+
+test("Claude tokens come from the list, the single variable, or both, without duplicates", async () => {
+  const { claudeTokens } = await import("../src/config.ts");
+  assert.deepEqual(claudeTokens(loadConfig({})), []);
+  assert.deepEqual(claudeTokens(loadConfig({ CLAUDE_CODE_OAUTH_TOKEN: "one" })), ["one"]);
+  assert.deepEqual(claudeTokens(loadConfig({ CLAUDE_CODE_OAUTH_TOKENS: " two ,\nthree\n,two" })), ["two", "three"]);
+  assert.deepEqual(claudeTokens(loadConfig({ CLAUDE_CODE_OAUTH_TOKEN: "one", CLAUDE_CODE_OAUTH_TOKENS: "two,one" })), ["one", "two"]);
+});

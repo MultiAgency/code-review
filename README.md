@@ -55,6 +55,7 @@ account to pay for the reviews, and somewhere to run it.
 | `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY` | Your GitHub App's ID and private key |
 | `GITHUB_WEBHOOK_SECRET` | The secret you gave the GitHub App, so the service knows messages really come from GitHub |
 | `CLAUDE_CODE_OAUTH_TOKEN` | The Claude token from step 2 |
+| `CLAUDE_CODE_OAUTH_TOKENS` | Optional: several Claude tokens, separated by commas. Reviews take turns across them, and when one hits its usage limit it rests for an hour while the others carry on |
 | `POST_REVIEWS` | `false` (the default) only logs reviews; `true` posts them on GitHub |
 | `ALLOWED_REPOS` | Which repositories to review, e.g. `my-org/my-repo`. Leave empty for all |
 | `DAILY_BUDGET_USD` | Stops starting new reviews once a day's spending reaches this (default $50) |
@@ -90,7 +91,8 @@ reviewed by.
 
 - **Cost:** a typical review costs roughly $0.40–0.70 of Claude usage (more for very large pull
   requests). On a Claude plan this comes out of that seat's usage. If the usage limit is reached,
-  the review says so and you can ask again later.
+  the review says so and you can ask again later. With several tokens, it moves on to the next one
+  instead. Check that sharing seats this way fits your Claude plan's terms.
 - **How good it is:** on our tests with real pull requests, it caught about 9 in 10 of the serious
   issues a strong existing AI reviewer found, plus many real bugs that reviewer missed. About 1 in
   20 of its comments was wrong. It misses some smaller issues, so treat it as a second pair of

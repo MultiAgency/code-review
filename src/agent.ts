@@ -39,6 +39,8 @@ export interface AgentRunner {
 }
 
 export interface SdkAgentOptions {
+  /** Claude subscription token for this runner; unset uses the environment's own login or key. */
+  oauthToken?: string;
   /** Unset = Claude Code's default model for the account. */
   model?: string;
   effort: EffortLevel;
@@ -95,7 +97,7 @@ export function sdkAgentRunner(options: SdkAgentOptions): AgentRunner {
             // mentions in it into file attachments, which bypass the PreToolUse hook.
             verbatimPrompts: true,
             persistSession: false,
-            env: claudeEnv(),
+            env: claudeEnv(options.oauthToken),
             systemPrompt: {
               type: "preset",
               preset: "claude_code",

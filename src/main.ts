@@ -2,9 +2,7 @@
 import { createServer } from "node:http";
 import { dirname } from "node:path";
 import { mkdirSync } from "node:fs";
-import { sdkAgentRunner } from "./agent.js";
 import {
-  agentOptions,
   checkServiceConfig,
   ConfigError,
   loadConfig,
@@ -25,6 +23,7 @@ import {
 } from "./publisher.js";
 import { openReviewQueue } from "./queue.js";
 import { webhookHandler } from "./server.js";
+import { agentRunnerFor } from "./token-pool.js";
 import type { ReviewJob } from "./triggers.js";
 import { openPullRequestWorkspace } from "./workspace.js";
 
@@ -42,7 +41,7 @@ try {
   process.exit(1);
 }
 
-const agent = sdkAgentRunner(agentOptions(config));
+const agent = agentRunnerFor(config, log);
 const auth = {
   apiUrl: config.GITHUB_API_URL,
   ...(config.GITHUB_APP_ID ? { appId: config.GITHUB_APP_ID } : {}),

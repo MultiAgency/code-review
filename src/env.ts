@@ -25,7 +25,7 @@ function pick(names: (key: string) => boolean): Record<string, string> {
  * only when that cloud is the model provider. GitHub credentials and the
  * webhook secret are never passed, so a prompt-injected PR can't read them.
  */
-export function claudeEnv(): Record<string, string> {
+export function claudeEnv(oauthToken?: string): Record<string, string> {
   const bedrock = process.env.CLAUDE_CODE_USE_BEDROCK === "1";
   const vertex = process.env.CLAUDE_CODE_USE_VERTEX === "1";
   return {
@@ -34,13 +34,15 @@ export function claudeEnv(): Record<string, string> {
         BASE.includes(key) ||
         NETWORK.includes(key) ||
         key.startsWith("ANTHROPIC_") ||
-        key.startsWith("CLAUDE_CODE_") ||
+        // The token list stays out: each process gets only the one token it uses.
+        (key.startsWith("CLAUDE_CODE_") && key !== "CLAUDE_CODE_OAUTH_TOKENS") ||
         (bedrock && key.startsWith("AWS_")) ||
         (vertex &&
           (key.startsWith("CLOUD_ML_") ||
             key.startsWith("GOOGLE_") ||
             key.startsWith("VERTEX_"))),
     ),
+    ...(oauthToken ? { CLAUDE_CODE_OAUTH_TOKEN: oauthToken } : {}),
     CLAUDE_AGENT_SDK_CLIENT_APP: "claude-pr-review/0.2.0",
   };
 }
@@ -75,8 +77,10 @@ const SECRET_NAMES = /KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL/i;
 export function redactSecrets(text: string): string {
   let out = text;
   for (const [key, value] of Object.entries(process.env)) {
-    if (value && value.length >= 12 && SECRET_NAMES.test(key)) {
-      out = out.split(value).join("[redacted]");
+    if (!value || !SECRET_NAMES.test(key)) continue;
+    // A list (e.g. several tokens) is redacted whole and item by item.
+    for (const secret of [value, ...value.split(/[\s,]+/)]) {
+      if (secret.length >= 12) out = out.split(secret).join("[redacted]");
     }
   }
   return out;
