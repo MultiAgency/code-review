@@ -104,3 +104,8 @@ our code; the earlier 15 was a high draw. Streamed vs plain prompt is within noi
 (needed to interrupt a pass and keep its cost) stays. The shorter summary ("2-3 sentences ... don't
 restate the findings") holds against same-day runs and is adopted. Held-out with it: valid 11/16,
 Important 3/3 (same as v1). Lesson: compare versions within the same day, with a same-day control.
+
+Sonnet 5.5 (`REVIEW_MODEL=claude-sonnet-5-5`, effort high, baseline code c7fea7a), tuning set, same
+day as two Opus runs (12, 12 valid; Important 5/5, 4/5): valid 9, 9 (47%); Important 4/5, 4/5,
+missing #212 F11 both times; ~$2.00/run vs ~$5 (40%). Below the bar (within ~2 valid of Opus, and
+the Important issues): Opus stays the default.
