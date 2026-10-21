@@ -79,3 +79,28 @@ passes, prompt variants, `xhigh`, 2 samples, an extra Compliance pass and Fable;
 held-out misses are a stable set of Compliance and error-path Nits. Next ideas, untested: a
 repo-specific checklist distilled from past ai-review findings (learning from feedback), and a
 larger, multi-repo eval before tuning further.
+
+## 2026-10-21 (later): recall drop investigated, summary change, streamed prompts
+
+Tuning-set runs on the current code scored lower (valid 11, 11) than the v1 baseline (15, 13).
+Investigated before changing anything:
+
+- What each version sends Claude (prompts, schemas, budgets, options, system prompt append) is
+  byte-identical from c7fea7a to e7777b5 (captured without calling Claude). SDK/CLI version and
+  model (Opus 5.5) unchanged.
+- Re-scoring the old baseline's saved findings with today's judge: 18/26, as originally. The judge
+  hasn't changed.
+- Same-day A/B (valid labels of 19 / Important):
+
+| Run (same day)                           | Valid | Important |
+| ---------------------------------------- | ----- | --------- |
+| old baseline code c7fea7a                | 12    | 5/5       |
+| current code, prompt not streamed        | 12    | 4/5       |
+| current code (streamed prompt), e7777b5  | 11, 11| 5/5, 3/5  |
+| + shorter summary instruction            | 11, 13| 4/5, 4/5  |
+
+The old code scores like the new code today: the drop is day-to-day model variance (or drift), not
+our code; the earlier 15 was a high draw. Streamed vs plain prompt is within noise, so streaming
+(needed to interrupt a pass and keep its cost) stays. The shorter summary ("2-3 sentences ... don't
+restate the findings") holds against same-day runs and is adopted. Held-out with it: valid 11/16,
+Important 3/3 (same as v1). Lesson: compare versions within the same day, with a same-day control.

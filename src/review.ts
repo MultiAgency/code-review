@@ -44,7 +44,9 @@ function reviewOutput(severities: [string, ...string[]]) {
   return z.object({
     summary: z
       .string()
-      .describe("2-5 sentence overview of the change and its overall risk."),
+      .describe(
+        "2-3 sentences: what the change does and its overall risk. Don't restate the findings; they are listed separately.",
+      ),
     checked: z
       .array(z.string())
       .describe(
