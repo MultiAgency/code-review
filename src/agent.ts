@@ -225,7 +225,12 @@ export function sdkAgentRunner(options: SdkAgentOptions): AgentRunner {
         costUsd: 0,
       };
     const costUsd = result.total_cost_usd;
-    if (result.terminal_reason === "prompt_too_long")
+    // The CLI (2.1.304) reports a prompt over the context window as `blocking_limit`
+    // (see test/fixtures/sdk/too-long.ndjson); `prompt_too_long` is the documented name.
+    if (
+      result.terminal_reason === "prompt_too_long" ||
+      result.terminal_reason === "blocking_limit"
+    )
       return {
         ok: false,
         failure: "too_large",
