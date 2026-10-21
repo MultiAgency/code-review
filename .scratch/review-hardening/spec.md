@@ -13,11 +13,13 @@ proven patterns. We write our own prompts and code; nothing is copied from those
 ## Decisions
 
 Security (ship first, standalone):
+
 - H1: automatic reviews only for trusted authors; bots get none. Trusted members can still use the trigger phrase on any PR.
 - H2: `verbatimPrompts: true` on every agent pass.
 - H3: the path guard denies `~`-prefixed paths and `..` inside brace patterns.
 
 Review behaviour:
+
 - One summary comment per PR, edited in place, with hidden markers: reviewed head, fingerprints of posted findings, status.
 - Re-review via trigger phrase covers commits since the last reviewed head when it is an ancestor; full review after a rebase or with `@private-review full`.
 - Open findings from earlier reviews go into the prompt to be repeated word-for-word if still present. A finding is resolved only by a full review at a new head.
@@ -28,6 +30,7 @@ Review behaviour:
 - Skip lockfiles, build output, minified, vendored and binary files; skip the review if nothing is left.
 
 Operations:
+
 - Status reactions 👀 / 🎉 / 😕 and a one-line failure reason from a fixed list; raw errors never posted. App needs Issues: write.
 - Review jobs persisted in `node:sqlite` at `/data/jobs.db` (Railway volume): delivery-id dedupe, 3 retries with backoff for transient failures, no retry for budget / bad output / auth, interrupted jobs resumed on start.
 - Timeouts: 20 min per agent pass, 50 min per job, 2 min per git/GitHub call; fresh GitHub token before posting; comments pinned to the reviewed head only while the PR still contains it.

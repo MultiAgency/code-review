@@ -2,13 +2,23 @@ import { z } from "zod";
 import type { SdkAgentOptions } from "./agent.js";
 import type { ReviewOptions } from "./review.js";
 
-const num = (fallback: number, check: (s: z.ZodNumber) => z.ZodNumber = (s) => s) =>
+const num = (
+  fallback: number,
+  check: (s: z.ZodNumber) => z.ZodNumber = (s) => s,
+) =>
   z
     .string()
     .trim()
     .optional()
     .transform((v) => (v === undefined || v === "" ? fallback : Number(v)))
-    .pipe(check(z.number({ error: (issue) => (issue.code === "invalid_type" ? "must be a number" : undefined) })));
+    .pipe(
+      check(
+        z.number({
+          error: (issue) =>
+            issue.code === "invalid_type" ? "must be a number" : undefined,
+        }),
+      ),
+    );
 
 const bool = (fallback: boolean) =>
   z
@@ -32,7 +42,9 @@ const optionalText = z
 const Env = z.object({
   // Unset = Claude Code's default model for the account.
   REVIEW_MODEL: optionalText,
-  REVIEW_EFFORT: z.enum(["low", "medium", "high", "xhigh", "max"]).default("high"),
+  REVIEW_EFFORT: z
+    .enum(["low", "medium", "high", "xhigh", "max"])
+    .default("high"),
   // Cap per agent pass, and per review across all its passes (80% review passes, 20% verify).
   REVIEW_MAX_BUDGET_USD: num(10, (s) => s.positive()),
   REVIEW_BUDGET_USD: num(12, (s) => s.positive()),
@@ -45,7 +57,12 @@ const Env = z.object({
   REVIEW_EXTRA_PASSES: z
     .string()
     .optional()
-    .transform((v) => (v ?? "").split(",").map((s) => s.trim()).filter(Boolean)),
+    .transform((v) =>
+      (v ?? "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean),
+    ),
   // Review passes running at once per review; each is a Claude Code process.
   REVIEW_MAX_PARALLEL_PASSES: num(2, (s) => s.int().min(1)),
   // Reviews stop starting once this much is spent in a UTC day (estimated at API prices); 0 = no cap.
@@ -86,7 +103,9 @@ const Env = z.object({
   GITHUB_API_URL: z.url().default("https://api.github.com"),
   GITHUB_APP_ID: optionalText,
   // PEM, raw or with literal "\n" sequences (common in PaaS env editors).
-  GITHUB_APP_PRIVATE_KEY: optionalText.transform((v) => v?.replace(/\\n/g, "\n")),
+  GITHUB_APP_PRIVATE_KEY: optionalText.transform((v) =>
+    v?.replace(/\\n/g, "\n"),
+  ),
   // Fallback when not running as a GitHub App (fine-grained PAT).
   GITHUB_TOKEN: optionalText,
 });
@@ -99,7 +118,9 @@ export class ConfigError extends Error {}
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const parsed = Env.safeParse(env);
   if (!parsed.success) {
-    const problems = parsed.error.issues.map((i) => `  ${i.path.join(".")}: ${i.message}`);
+    const problems = parsed.error.issues.map(
+      (i) => `  ${i.path.join(".")}: ${i.message}`,
+    );
     throw new ConfigError(`Invalid configuration:\n${problems.join("\n")}`);
   }
   return parsed.data;
@@ -108,13 +129,21 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
 /** The webhook service also needs a secret and a way to authenticate to GitHub. */
 export function checkServiceConfig(config: Config): void {
   const problems: string[] = [];
-  if (!config.GITHUB_WEBHOOK_SECRET) problems.push("  GITHUB_WEBHOOK_SECRET: required");
-  const app = Boolean(config.GITHUB_APP_ID) || Boolean(config.GITHUB_APP_PRIVATE_KEY);
+  if (!config.GITHUB_WEBHOOK_SECRET)
+    problems.push("  GITHUB_WEBHOOK_SECRET: required");
+  const app =
+    Boolean(config.GITHUB_APP_ID) || Boolean(config.GITHUB_APP_PRIVATE_KEY);
   if (app && !(config.GITHUB_APP_ID && config.GITHUB_APP_PRIVATE_KEY)) {
-    problems.push("  GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY: set both, or neither");
+    problems.push(
+      "  GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY: set both, or neither",
+    );
   }
-  if (!app && !config.GITHUB_TOKEN) problems.push("  GitHub auth: set GITHUB_APP_ID + GITHUB_APP_PRIVATE_KEY, or GITHUB_TOKEN");
-  if (problems.length) throw new ConfigError(`Invalid configuration:\n${problems.join("\n")}`);
+  if (!app && !config.GITHUB_TOKEN)
+    problems.push(
+      "  GitHub auth: set GITHUB_APP_ID + GITHUB_APP_PRIVATE_KEY, or GITHUB_TOKEN",
+    );
+  if (problems.length)
+    throw new ConfigError(`Invalid configuration:\n${problems.join("\n")}`);
 }
 
 export function agentOptions(config: Config): SdkAgentOptions {

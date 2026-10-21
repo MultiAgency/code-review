@@ -7,7 +7,11 @@ import { dirname, join } from "node:path";
 export function gitRepo() {
   const dir = mkdtempSync(join(tmpdir(), "review-test-"));
   const git = (...args: string[]) =>
-    execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", ...args], { cwd: dir, encoding: "utf8" }).trim();
+    execFileSync(
+      "git",
+      ["-c", "user.email=t@t", "-c", "user.name=t", ...args],
+      { cwd: dir, encoding: "utf8" },
+    ).trim();
   git("init", "-q", "-b", "main");
   return {
     dir,

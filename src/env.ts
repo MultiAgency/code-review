@@ -1,7 +1,16 @@
 // One place for what each subprocess may see, and what must never be published.
 
 const BASE = ["PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "TZ"];
-const NETWORK = ["HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY", "https_proxy", "http_proxy", "no_proxy", "NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE"];
+const NETWORK = [
+  "HTTPS_PROXY",
+  "HTTP_PROXY",
+  "NO_PROXY",
+  "https_proxy",
+  "http_proxy",
+  "no_proxy",
+  "NODE_EXTRA_CA_CERTS",
+  "SSL_CERT_FILE",
+];
 
 function pick(names: (key: string) => boolean): Record<string, string> {
   const out: Record<string, string> = {};
@@ -27,7 +36,10 @@ export function claudeEnv(): Record<string, string> {
         key.startsWith("ANTHROPIC_") ||
         key.startsWith("CLAUDE_CODE_") ||
         (bedrock && key.startsWith("AWS_")) ||
-        (vertex && (key.startsWith("CLOUD_ML_") || key.startsWith("GOOGLE_") || key.startsWith("VERTEX_"))),
+        (vertex &&
+          (key.startsWith("CLOUD_ML_") ||
+            key.startsWith("GOOGLE_") ||
+            key.startsWith("VERTEX_"))),
     ),
     CLAUDE_AGENT_SDK_CLIENT_APP: "claude-pr-review/0.2.0",
   };

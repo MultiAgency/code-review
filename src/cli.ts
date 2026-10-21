@@ -3,7 +3,13 @@
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { sdkAgentRunner } from "./agent.js";
-import { agentOptions, ConfigError, loadConfig, reviewOptions, type Config } from "./config.js";
+import {
+  agentOptions,
+  ConfigError,
+  loadConfig,
+  reviewOptions,
+  type Config,
+} from "./config.js";
 import { buildReport } from "./report.js";
 import { reviewChanges } from "./review.js";
 import { openLocalWorkspace } from "./workspace.js";
@@ -26,15 +32,30 @@ try {
   process.exit(1);
 }
 
-const workspace = await openLocalWorkspace({ repoDir: resolve(values.repo), base: values.base, head: values.head });
+const workspace = await openLocalWorkspace({
+  repoDir: resolve(values.repo),
+  base: values.base,
+  head: values.head,
+});
 try {
   const result = await reviewChanges(
     { workspace, log: (msg) => console.error(`[claude-pr-review] ${msg}`) },
-    { agent: sdkAgentRunner(agentOptions(config)), options: reviewOptions(config) },
+    {
+      agent: sdkAgentRunner(agentOptions(config)),
+      options: reviewOptions(config),
+    },
   );
   // Same rendering the service posts, with every finding in the summary.
-  const report = buildReport(result, { headSha: workspace.headSha, mode: "full", maxInline: 0 });
-  console.log(values.json ? JSON.stringify(result, null, 2) : forTerminal(report.renderSummary(new Set())));
+  const report = buildReport(result, {
+    headSha: workspace.headSha,
+    mode: "full",
+    maxInline: 0,
+  });
+  console.log(
+    values.json
+      ? JSON.stringify(result, null, 2)
+      : forTerminal(report.renderSummary(new Set())),
+  );
   process.exitCode = result.findings.some((f) => f.severity === "high") ? 2 : 0;
 } finally {
   await workspace.dispose();

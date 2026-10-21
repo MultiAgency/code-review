@@ -20,7 +20,9 @@ export function webhookHandler(options: WebhookOptions): RequestListener {
   return (req, res) => {
     void (async () => {
       if (req.method === "GET" && req.url === "/healthz") {
-        res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ ok: true, ...options.queue.stats() }));
+        res
+          .writeHead(200, { "Content-Type": "application/json" })
+          .end(JSON.stringify({ ok: true, ...options.queue.stats() }));
         return;
       }
       if (req.method !== "POST" || req.url !== "/webhook") {
@@ -34,7 +36,13 @@ export function webhookHandler(options: WebhookOptions): RequestListener {
         res.writeHead(413).end();
         return;
       }
-      if (!validSignature(options.secret, body, req.headers["x-hub-signature-256"])) {
+      if (
+        !validSignature(
+          options.secret,
+          body,
+          req.headers["x-hub-signature-256"],
+        )
+      ) {
         res.writeHead(401).end("bad signature");
         return;
       }
@@ -45,27 +53,47 @@ export function webhookHandler(options: WebhookOptions): RequestListener {
         res.writeHead(400).end();
         return;
       }
-      const decision = jobFromWebhook(String(req.headers["x-github-event"] ?? ""), payload, {
-        trigger: options.trigger,
-        allowedRepos: options.allowedRepos,
-      });
+      const decision = jobFromWebhook(
+        String(req.headers["x-github-event"] ?? ""),
+        payload,
+        {
+          trigger: options.trigger,
+          allowedRepos: options.allowedRepos,
+        },
+      );
       if ("skip" in decision) {
         res.writeHead(204).end();
         return;
       }
       const { job } = decision;
-      const delivery = String(req.headers["x-github-delivery"] ?? `${job.repo}#${job.prNumber}:${Date.now()}`);
+      const delivery = String(
+        req.headers["x-github-delivery"] ??
+          `${job.repo}#${job.prNumber}:${Date.now()}`,
+      );
       const result = options.queue.submit(job, delivery);
-      log({ pr: `${job.repo}#${job.prNumber}`, msg: result, reason: job.reason, requestedBy: job.requestedBy, delivery });
+      log({
+        pr: `${job.repo}#${job.prNumber}`,
+        msg: result,
+        reason: job.reason,
+        requestedBy: job.requestedBy,
+        delivery,
+      });
       res.writeHead(202).end(result);
     })().catch((error) => {
-      log({ level: "error", msg: "webhook handler failed", error: String(error) });
+      log({
+        level: "error",
+        msg: "webhook handler failed",
+        error: String(error),
+      });
       if (!res.headersSent) res.writeHead(500).end();
     });
   };
 }
 
-function readBody(req: IncomingMessage, limit = 25 * 1024 * 1024): Promise<Buffer> {
+function readBody(
+  req: IncomingMessage,
+  limit = 25 * 1024 * 1024,
+): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let size = 0;
@@ -81,9 +109,15 @@ function readBody(req: IncomingMessage, limit = 25 * 1024 * 1024): Promise<Buffe
   });
 }
 
-function validSignature(secret: string, body: Buffer, header: string | string[] | undefined): boolean {
+function validSignature(
+  secret: string,
+  body: Buffer,
+  header: string | string[] | undefined,
+): boolean {
   if (typeof header !== "string" || !header.startsWith("sha256=")) return false;
-  const expected = Buffer.from(`sha256=${createHmac("sha256", secret).update(body).digest("hex")}`);
+  const expected = Buffer.from(
+    `sha256=${createHmac("sha256", secret).update(body).digest("hex")}`,
+  );
   const actual = Buffer.from(header);
   return expected.length === actual.length && timingSafeEqual(expected, actual);
 }

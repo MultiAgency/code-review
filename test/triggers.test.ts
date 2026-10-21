@@ -5,7 +5,11 @@ import { jobFromWebhook, mentionsTrigger } from "../src/triggers.ts";
 const opts = { trigger: "@private-review", allowedRepos: [] as string[] };
 const repository = { full_name: "acme/app" };
 
-const pr = (action: string, draft = false, author: { association?: string; type?: string } = {}) =>
+const pr = (
+  action: string,
+  draft = false,
+  author: { association?: string; type?: string } = {},
+) =>
   jobFromWebhook(
     "pull_request",
     {
@@ -22,21 +26,39 @@ const pr = (action: string, draft = false, author: { association?: string; type?
     opts,
   );
 
-const comment = (body: string, extra: { association?: string; senderType?: string; onIssue?: boolean; state?: string } = {}) =>
+const comment = (
+  body: string,
+  extra: {
+    association?: string;
+    senderType?: string;
+    onIssue?: boolean;
+    state?: string;
+  } = {},
+) =>
   jobFromWebhook(
     "issue_comment",
     {
       action: "created",
       repository,
-      issue: { number: 3, state: extra.state ?? "open", ...(extra.onIssue ? {} : { pull_request: { url: "x" } }) },
-      comment: { id: 99, body, author_association: extra.association ?? "MEMBER" },
+      issue: {
+        number: 3,
+        state: extra.state ?? "open",
+        ...(extra.onIssue ? {} : { pull_request: { url: "x" } }),
+      },
+      comment: {
+        id: 99,
+        body,
+        author_association: extra.association ?? "MEMBER",
+      },
       sender: { login: "dev", type: extra.senderType ?? "User" },
     },
     opts,
   );
 
 test("reviews once when a PR becomes reviewable, never on push", () => {
-  assert.deepEqual(pr("opened"), { job: { repo: "acme/app", prNumber: 3, installationId: 7, reason: "opened" } });
+  assert.deepEqual(pr("opened"), {
+    job: { repo: "acme/app", prNumber: 3, installationId: 7, reason: "opened" },
+  });
   assert.ok("job" in pr("ready_for_review"));
   assert.ok("skip" in pr("opened", true));
   assert.ok("skip" in pr("synchronize"));
@@ -47,9 +69,13 @@ test("automatic reviews only for trusted, human authors", () => {
   assert.ok("job" in pr("opened", false, { association: "OWNER" }));
   assert.ok("job" in pr("opened", false, { association: "COLLABORATOR" }));
   assert.ok("skip" in pr("opened", false, { association: "CONTRIBUTOR" }));
-  assert.ok("skip" in pr("opened", false, { association: "FIRST_TIME_CONTRIBUTOR" }));
+  assert.ok(
+    "skip" in pr("opened", false, { association: "FIRST_TIME_CONTRIBUTOR" }),
+  );
   assert.ok("skip" in pr("ready_for_review", false, { association: "NONE" }));
-  assert.ok("skip" in pr("opened", false, { association: "MEMBER", type: "Bot" }));
+  assert.ok(
+    "skip" in pr("opened", false, { association: "MEMBER", type: "Bot" }),
+  );
 });
 
 test("on-demand review from a trusted comment", () => {
@@ -65,7 +91,9 @@ test("on-demand review from a trusted comment", () => {
 });
 
 test("ignores untrusted, bot, issue, closed and unrelated comments", () => {
-  assert.ok("skip" in comment("@private-review", { association: "CONTRIBUTOR" }));
+  assert.ok(
+    "skip" in comment("@private-review", { association: "CONTRIBUTOR" }),
+  );
   assert.ok("skip" in comment("@private-review", { association: "NONE" }));
   assert.ok("skip" in comment("@private-review", { senderType: "Bot" }));
   assert.ok("skip" in comment("@private-review", { onIssue: true }));
@@ -75,10 +103,18 @@ test("ignores untrusted, bot, issue, closed and unrelated comments", () => {
 });
 
 test("respects the repo allowlist", () => {
-  const d = jobFromWebhook("pull_request", { action: "opened", repository, pull_request: { number: 1, author_association: "OWNER" } }, {
-    ...opts,
-    allowedRepos: ["acme/other"],
-  });
+  const d = jobFromWebhook(
+    "pull_request",
+    {
+      action: "opened",
+      repository,
+      pull_request: { number: 1, author_association: "OWNER" },
+    },
+    {
+      ...opts,
+      allowedRepos: ["acme/other"],
+    },
+  );
   assert.deepEqual(d, { skip: "repo not allowed" });
 });
 

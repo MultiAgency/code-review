@@ -8,35 +8,58 @@ function withEnv(vars: Record<string, string>, fn: () => void) {
   try {
     fn();
   } finally {
-    for (const key of Object.keys(vars)) if (!(key in saved)) delete process.env[key];
+    for (const key of Object.keys(vars))
+      if (!(key in saved)) delete process.env[key];
     Object.assign(process.env, saved);
   }
 }
 
 test("Claude never sees GitHub credentials; cloud credentials only for its own provider", () => {
   withEnv(
-    { GITHUB_TOKEN: "ghp_x", GITHUB_WEBHOOK_SECRET: "w", GITHUB_APP_PRIVATE_KEY: "k", AWS_SECRET_ACCESS_KEY: "aws", CLAUDE_CODE_OAUTH_TOKEN: "oat", https_proxy: "http://p" },
+    {
+      GITHUB_TOKEN: "ghp_x",
+      GITHUB_WEBHOOK_SECRET: "w",
+      GITHUB_APP_PRIVATE_KEY: "k",
+      AWS_SECRET_ACCESS_KEY: "aws",
+      CLAUDE_CODE_OAUTH_TOKEN: "oat",
+      https_proxy: "http://p",
+    },
     () => {
       const env = claudeEnv();
-      for (const key of ["GITHUB_TOKEN", "GITHUB_WEBHOOK_SECRET", "GITHUB_APP_PRIVATE_KEY", "AWS_SECRET_ACCESS_KEY"]) {
+      for (const key of [
+        "GITHUB_TOKEN",
+        "GITHUB_WEBHOOK_SECRET",
+        "GITHUB_APP_PRIVATE_KEY",
+        "AWS_SECRET_ACCESS_KEY",
+      ]) {
         assert.equal(env[key], undefined, key);
       }
       assert.equal(env.CLAUDE_CODE_OAUTH_TOKEN, "oat");
       assert.equal(env.https_proxy, "http://p");
     },
   );
-  withEnv({ CLAUDE_CODE_USE_BEDROCK: "1", AWS_SECRET_ACCESS_KEY: "aws" }, () => {
-    assert.equal(claudeEnv().AWS_SECRET_ACCESS_KEY, "aws");
-  });
+  withEnv(
+    { CLAUDE_CODE_USE_BEDROCK: "1", AWS_SECRET_ACCESS_KEY: "aws" },
+    () => {
+      assert.equal(claudeEnv().AWS_SECRET_ACCESS_KEY, "aws");
+    },
+  );
 });
 
 test("git sees neither model nor GitHub credentials, nor host config", () => {
-  withEnv({ CLAUDE_CODE_OAUTH_TOKEN: "oat", GITHUB_TOKEN: "ghp_x", ANTHROPIC_API_KEY: "sk" }, () => {
-    const env = gitEnv({ GIT_CONFIG_COUNT: "1" });
-    assert.equal(env.CLAUDE_CODE_OAUTH_TOKEN, undefined);
-    assert.equal(env.GITHUB_TOKEN, undefined);
-    assert.equal(env.ANTHROPIC_API_KEY, undefined);
-    assert.equal(env.GIT_CONFIG_GLOBAL, "/dev/null");
-    assert.equal(env.GIT_CONFIG_COUNT, "1");
-  });
+  withEnv(
+    {
+      CLAUDE_CODE_OAUTH_TOKEN: "oat",
+      GITHUB_TOKEN: "ghp_x",
+      ANTHROPIC_API_KEY: "sk",
+    },
+    () => {
+      const env = gitEnv({ GIT_CONFIG_COUNT: "1" });
+      assert.equal(env.CLAUDE_CODE_OAUTH_TOKEN, undefined);
+      assert.equal(env.GITHUB_TOKEN, undefined);
+      assert.equal(env.ANTHROPIC_API_KEY, undefined);
+      assert.equal(env.GIT_CONFIG_GLOBAL, "/dev/null");
+      assert.equal(env.GIT_CONFIG_COUNT, "1");
+    },
+  );
 });

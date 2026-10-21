@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { join, posix } from "node:path";
 import { git, type GitOptions } from "./git.js";
 
-export type FileStatus = "added" | "modified" | "deleted" | "renamed" | "copied" | "type_changed";
+export type FileStatus =
+  "added" | "modified" | "deleted" | "renamed" | "copied" | "type_changed";
 
 export interface ChangedFile {
   path: string;
@@ -68,7 +69,14 @@ const EXCLUDES = SKIP_GLOBS.map((g) => `:(exclude,glob)${g}`);
 
 // Pinned so the parser never depends on config; --no-textconv / --no-ext-diff
 // stop a PR's .gitattributes from selecting a diff program.
-const DIFF_FLAGS = ["--no-color", "--no-ext-diff", "--no-textconv", "-M", "--src-prefix=a/", "--dst-prefix=b/"];
+const DIFF_FLAGS = [
+  "--no-color",
+  "--no-ext-diff",
+  "--no-textconv",
+  "-M",
+  "--src-prefix=a/",
+  "--dst-prefix=b/",
+];
 
 const FETCH_TIMEOUT_MS = 10 * 60_000;
 
@@ -89,15 +97,22 @@ export async function openPullRequestWorkspace(opts: {
 }): Promise<Workspace> {
   const workDir = await mkdtemp(join(tmpdir(), "pr-review-"));
   const repoDir = join(workDir, "repo");
-  const gitOpts: GitOptions = { env: opts.gitEnv, ...(opts.signal ? { signal: opts.signal } : {}) };
+  const gitOpts: GitOptions = {
+    env: opts.gitEnv,
+    ...(opts.signal ? { signal: opts.signal } : {}),
+  };
   try {
     await mkdir(repoDir);
     await git(repoDir, ["init", "--quiet"], gitOpts);
     await git(repoDir, ["remote", "add", "origin", opts.cloneUrl], gitOpts);
-    await git(repoDir, ["fetch", "--quiet", "--depth=1", "origin", opts.headSha], {
-      ...gitOpts,
-      timeoutMs: FETCH_TIMEOUT_MS,
-    });
+    await git(
+      repoDir,
+      ["fetch", "--quiet", "--depth=1", "origin", opts.headSha],
+      {
+        ...gitOpts,
+        timeoutMs: FETCH_TIMEOUT_MS,
+      },
+    );
     await git(
       repoDir,
       [
@@ -111,7 +126,11 @@ export async function openPullRequestWorkspace(opts: {
       ],
       { ...gitOpts, timeoutMs: FETCH_TIMEOUT_MS },
     );
-    await git(repoDir, ["checkout", "--quiet", "--detach", opts.headSha], gitOpts);
+    await git(
+      repoDir,
+      ["checkout", "--quiet", "--detach", opts.headSha],
+      gitOpts,
+    );
   } catch (error) {
     await rm(workDir, { recursive: true, force: true });
     throw error;
@@ -132,9 +151,15 @@ export async function openPullRequestWorkspace(opts: {
  * A local checkout (the CLI). The head is checked out into its own worktree,
  * so the agent reads exactly the reviewed commit, not uncommitted edits.
  */
-export async function openLocalWorkspace(opts: { repoDir: string; base: string; head: string }): Promise<Workspace> {
+export async function openLocalWorkspace(opts: {
+  repoDir: string;
+  base: string;
+  head: string;
+}): Promise<Workspace> {
   const gitOpts: GitOptions = {};
-  const headSha = (await git(opts.repoDir, ["rev-parse", "--verify", `${opts.head}^{commit}`])).trim();
+  const headSha = (
+    await git(opts.repoDir, ["rev-parse", "--verify", `${opts.head}^{commit}`])
+  ).trim();
   try {
     await git(opts.repoDir, ["merge-base", opts.base, headSha]);
   } catch {
@@ -144,7 +169,14 @@ export async function openLocalWorkspace(opts: { repoDir: string; base: string; 
   }
   const workDir = await mkdtemp(join(tmpdir(), "pr-review-"));
   const repoDir = join(workDir, "repo");
-  await git(opts.repoDir, ["worktree", "add", "--quiet", "--detach", repoDir, headSha]);
+  await git(opts.repoDir, [
+    "worktree",
+    "add",
+    "--quiet",
+    "--detach",
+    repoDir,
+    headSha,
+  ]);
   return makeWorkspace({
     repoDir,
     workDir,
@@ -154,7 +186,9 @@ export async function openLocalWorkspace(opts: { repoDir: string; base: string; 
     instructionsRef: opts.base,
     gitOpts,
     dispose: async () => {
-      await git(opts.repoDir, ["worktree", "remove", "--force", repoDir]).catch(() => {});
+      await git(opts.repoDir, ["worktree", "remove", "--force", repoDir]).catch(
+        () => {},
+      );
       await rm(workDir, { recursive: true, force: true });
     },
   });
@@ -176,12 +210,35 @@ function makeWorkspace(w: {
     headSha: w.headSha,
     range: w.range,
     async diff() {
-      const all = parseNameStatus(await git(w.repoDir, ["diff", "--name-status", "-z", "-M", ...w.diffArgs], w.gitOpts));
+      const all = parseNameStatus(
+        await git(
+          w.repoDir,
+          ["diff", "--name-status", "-z", "-M", ...w.diffArgs],
+          w.gitOpts,
+        ),
+      );
       const kept = parseNameStatus(
-        await git(w.repoDir, ["diff", "--name-status", "-z", "-M", ...w.diffArgs, "--", ".", ...EXCLUDES], w.gitOpts),
+        await git(
+          w.repoDir,
+          [
+            "diff",
+            "--name-status",
+            "-z",
+            "-M",
+            ...w.diffArgs,
+            "--",
+            ".",
+            ...EXCLUDES,
+          ],
+          w.gitOpts,
+        ),
       );
       const keptPaths = new Set(kept.map((f) => f.path));
-      const text = await git(w.repoDir, ["diff", ...DIFF_FLAGS, ...w.diffArgs, "--", ".", ...EXCLUDES], w.gitOpts);
+      const text = await git(
+        w.repoDir,
+        ["diff", ...DIFF_FLAGS, ...w.diffArgs, "--", ".", ...EXCLUDES],
+        w.gitOpts,
+      );
       return {
         text,
         files: kept,
@@ -196,11 +253,22 @@ function makeWorkspace(w: {
       const visit = async (path: string, depth: number): Promise<void> => {
         if (seen.has(path) || depth > MAX_IMPORT_DEPTH) return;
         seen.add(path);
-        const text = await readRegularFile(w.repoDir, w.instructionsRef, path, w.gitOpts);
-        if (!text?.trim() || text.length > MAX_INSTRUCTION_FILE || total + text.length > MAX_INSTRUCTIONS) return;
+        const text = await readRegularFile(
+          w.repoDir,
+          w.instructionsRef,
+          path,
+          w.gitOpts,
+        );
+        if (
+          !text?.trim() ||
+          text.length > MAX_INSTRUCTION_FILE ||
+          total + text.length > MAX_INSTRUCTIONS
+        )
+          return;
         total += text.length;
         found.push({ name: path, text: text.trim() });
-        for (const target of importsOf(text, path)) await visit(target, depth + 1);
+        for (const target of importsOf(text, path))
+          await visit(target, depth + 1);
       };
       for (const name of ["CLAUDE.md", "REVIEW.md"]) await visit(name, 0);
       return found;
@@ -231,8 +299,17 @@ function importsOf(text: string, from: string): string[] {
 }
 
 /** A file's content at a ref, only if it is a regular file (not a symlink or submodule). */
-async function readRegularFile(repoDir: string, ref: string, path: string, opts: GitOptions): Promise<string | undefined> {
-  const entry = await git(repoDir, ["ls-tree", "-z", ref, "--", path], opts).catch(() => "");
+async function readRegularFile(
+  repoDir: string,
+  ref: string,
+  path: string,
+  opts: GitOptions,
+): Promise<string | undefined> {
+  const entry = await git(
+    repoDir,
+    ["ls-tree", "-z", ref, "--", path],
+    opts,
+  ).catch(() => "");
   const mode = entry.split(" ")[0];
   if (mode !== "100644" && mode !== "100755") return undefined;
   return git(repoDir, ["show", `${ref}:${path}`], opts).catch(() => undefined);
@@ -251,7 +328,7 @@ const STATUS: Record<string, FileStatus> = {
 function parseNameStatus(out: string): ChangedFile[] {
   const parts = out.split("\0").filter((p) => p !== "");
   const files: ChangedFile[] = [];
-  for (let i = 0; i < parts.length; ) {
+  for (let i = 0; i < parts.length;) {
     const code = parts[i++]!;
     const status = STATUS[code[0]!] ?? "modified";
     if (status === "renamed" || status === "copied") {
@@ -274,7 +351,17 @@ function newSidePath(header: string): string | undefined {
 
 function unquoteC(quoted: string): string {
   const bytes: number[] = [];
-  const escapes: Record<string, number> = { n: 10, t: 9, r: 13, a: 7, b: 8, f: 12, v: 11, '"': 34, "\\": 92 };
+  const escapes: Record<string, number> = {
+    n: 10,
+    t: 9,
+    r: 13,
+    a: 7,
+    b: 8,
+    f: 12,
+    v: 11,
+    '"': 34,
+    "\\": 92,
+  };
   for (let i = 1; i < quoted.length - 1; i++) {
     const ch = quoted[i]!;
     if (ch !== "\\") {

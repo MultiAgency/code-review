@@ -68,18 +68,30 @@ export const SUMMARY_MARKER = "<!-- private-review:summary -->";
 const STATE_PREFIX = "<!-- private-review:state ";
 const MAX_BODY = 60_000;
 const MAX_STATE_CHARS = 20_000;
-const SEVERITY = { high: "🔴 High", medium: "🟠 Medium", low: "🟡 Low" } as const;
+const SEVERITY = {
+  high: "🔴 High",
+  medium: "🟠 Medium",
+  low: "🟡 Low",
+} as const;
 const ICON = { high: "🔴", medium: "🟠", low: "🟡" } as const;
 
 /** "🔴 Bugs · Important" when the repo names its passes and severities, else "🔴 High". */
 function badge(f: Pick<Finding, "severity" | "pass" | "label">): string {
   const names = [f.pass, f.label].filter(Boolean).map((n) => clean(n!));
-  return names.length ? `${ICON[f.severity]} ${names.join(" · ")}` : SEVERITY[f.severity];
+  return names.length
+    ? `${ICON[f.severity]} ${names.join(" · ")}`
+    : SEVERITY[f.severity];
 }
 
 export function fingerprint(file: string, title: string): string {
-  const norm = title.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-  return createHash("sha256").update(`${file}\0${norm}`).digest("hex").slice(0, 16);
+  const norm = title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+  return createHash("sha256")
+    .update(`${file}\0${norm}`)
+    .digest("hex")
+    .slice(0, 16);
 }
 
 export function parseState(body: string): ReviewState | undefined {
@@ -87,8 +99,15 @@ export function parseState(body: string): ReviewState | undefined {
   if (start < 0) return undefined;
   const end = body.indexOf(" -->", start);
   try {
-    const state = JSON.parse(Buffer.from(body.slice(start + STATE_PREFIX.length, end), "base64").toString("utf8"));
-    return state?.v === 1 && Array.isArray(state.findings) ? (state as ReviewState) : undefined;
+    const state = JSON.parse(
+      Buffer.from(
+        body.slice(start + STATE_PREFIX.length, end),
+        "base64",
+      ).toString("utf8"),
+    );
+    return state?.v === 1 && Array.isArray(state.findings)
+      ? (state as ReviewState)
+      : undefined;
   } catch {
     return undefined;
   }
@@ -112,7 +131,10 @@ export function buildReport(
   },
 ): ReviewReport {
   const priorByFp = new Map((ctx.prior?.findings ?? []).map((f) => [f.fp, f]));
-  const current = result.findings.map((f) => ({ ...f, fp: fingerprint(f.file, f.title) }));
+  const current = result.findings.map((f) => ({
+    ...f,
+    fp: fingerprint(f.file, f.title),
+  }));
   const currentFps = new Set(current.map((f) => f.fp));
 
   const inline: PlannedComment[] = [];
@@ -124,18 +146,32 @@ export function buildReport(
         fp: f.fp,
         path: f.file,
         line: f.placement.end,
-        ...(f.placement.end > f.placement.start ? { startLine: f.placement.start } : {}),
+        ...(f.placement.end > f.placement.start
+          ? { startLine: f.placement.start }
+          : {}),
         body: commentBody(f, f.placement.exact),
       });
-    } else if (f.placement.kind === "file" && inline.length + fileComments.length < ctx.maxInline) {
-      fileComments.push({ fp: f.fp, path: f.file, body: commentBody(f, false) });
+    } else if (
+      f.placement.kind === "file" &&
+      inline.length + fileComments.length < ctx.maxInline
+    ) {
+      fileComments.push({
+        fp: f.fp,
+        path: f.file,
+        body: commentBody(f, false),
+      });
     }
   }
 
   // An incremental review only saw new commits, so it can't tell whether older
   // findings were fixed. Only a full review of a new head resolves them.
-  const canResolve = ctx.mode === "full" && ctx.prior !== undefined && ctx.prior.head !== ctx.headSha;
-  const earlierOpen = (ctx.prior?.findings ?? []).filter((f) => f.status === "open" && !currentFps.has(f.fp));
+  const canResolve =
+    ctx.mode === "full" &&
+    ctx.prior !== undefined &&
+    ctx.prior.head !== ctx.headSha;
+  const earlierOpen = (ctx.prior?.findings ?? []).filter(
+    (f) => f.status === "open" && !currentFps.has(f.fp),
+  );
   const resolved = canResolve ? earlierOpen : [];
   const stillOpen = canResolve ? [] : earlierOpen;
 
@@ -143,28 +179,55 @@ export function buildReport(
     headSha: ctx.headSha,
     inline,
     fileComments,
-    reviewBody: clean(`Inline findings for \`${ctx.headSha.slice(0, 7)}\`; see the summary comment for the rest.`),
+    reviewBody: clean(
+      `Inline findings for \`${ctx.headSha.slice(0, 7)}\`; see the summary comment for the rest.`,
+    ),
     renderSummary(posted) {
       const state: ReviewState = {
         v: 1,
         head: ctx.headSha,
         findings: [
-          ...current.map((f) => stored(f, "open", posted.has(f.fp) || priorByFp.get(f.fp)?.commented === true)),
+          ...current.map((f) =>
+            stored(
+              f,
+              "open",
+              posted.has(f.fp) || priorByFp.get(f.fp)?.commented === true,
+            ),
+          ),
           ...stillOpen,
           ...resolved.map((f) => ({ ...f, status: "resolved" as const })),
         ],
       };
-      const notCommented = current.filter((f) => !posted.has(f.fp) && !priorByFp.get(f.fp)?.commented);
+      const notCommented = current.filter(
+        (f) => !posted.has(f.fp) && !priorByFp.get(f.fp)?.commented,
+      );
       const head = [
         SUMMARY_MARKER,
         `### Claude review · \`${ctx.headSha.slice(0, 7)}\`${ctx.mode === "incremental" ? ` (changes since \`${ctx.prior!.head.slice(0, 7)}\`)` : ""}`,
         "",
       ];
       if (result.verification === "unverified") {
-        head.push("> ⚠️ Verification didn't complete, so these findings were not double-checked.", "");
+        head.push(
+          "> ⚠️ Verification didn't complete, so these findings were not double-checked.",
+          "",
+        );
       }
-      head.push(clean(result.summary), "", countsLine(current.length, posted.size, stillOpen.length, resolved.length, result.dropped));
-      if (result.checked.length) head.push("", `_Checked: ${clean(result.checked.join("; ")).slice(0, 1500)}_`);
+      head.push(
+        clean(result.summary),
+        "",
+        countsLine(
+          current.length,
+          posted.size,
+          stillOpen.length,
+          resolved.length,
+          result.dropped,
+        ),
+      );
+      if (result.checked.length)
+        head.push(
+          "",
+          `_Checked: ${clean(result.checked.join("; ")).slice(0, 1500)}_`,
+        );
       const footer = [
         "",
         `<sub>${result.skipped ? `Skipped ${result.skipped} file(s): lockfiles, build output or vendored code. ` : ""}` +
@@ -173,13 +236,31 @@ export function buildReport(
       ];
       const sections: string[][] = [];
       if (notCommented.length) {
-        sections.push(["", "#### Findings", "", ...notCommented.map((f) => summaryEntry(f))]);
+        sections.push([
+          "",
+          "#### Findings",
+          "",
+          ...notCommented.map((f) => summaryEntry(f)),
+        ]);
       }
       if (stillOpen.length) {
-        sections.push(["", "#### Still open from earlier reviews", "", ...stillOpen.map((f) => `- ${SEVERITY[f.severity]} \`${f.file}:${f.line}\` ${clean(f.title)}`)]);
+        sections.push([
+          "",
+          "#### Still open from earlier reviews",
+          "",
+          ...stillOpen.map(
+            (f) =>
+              `- ${SEVERITY[f.severity]} \`${f.file}:${f.line}\` ${clean(f.title)}`,
+          ),
+        ]);
       }
       if (resolved.length) {
-        sections.push(["", "#### Resolved since the last review", "", ...resolved.map((f) => `- ✅ ~~${clean(f.title)}~~ \`${f.file}\``)]);
+        sections.push([
+          "",
+          "#### Resolved since the last review",
+          "",
+          ...resolved.map((f) => `- ✅ ~~${clean(f.title)}~~ \`${f.file}\``),
+        ]);
       }
       return fit(head, sections, footer);
     },
@@ -187,42 +268,86 @@ export function buildReport(
 }
 
 /** Summary comment for a review that failed; keeps the earlier state so nothing is lost. */
-export function renderFailure(reason: FailureReason, prior?: ReviewState): string {
+export function renderFailure(
+  reason: FailureReason,
+  prior?: ReviewState,
+): string {
   return [
     SUMMARY_MARKER,
     "### Claude review",
     "",
     `😕 The review failed: ${FAILURE_TEXT[reason]} Comment \`@private-review\` to retry.`,
-    ...(prior ? ["", `<sub>Earlier results for \`${prior.head.slice(0, 7)}\` are kept.</sub>`, `${STATE_PREFIX}${encodeState(prior)} -->`] : []),
+    ...(prior
+      ? [
+          "",
+          `<sub>Earlier results for \`${prior.head.slice(0, 7)}\` are kept.</sub>`,
+          `${STATE_PREFIX}${encodeState(prior)} -->`,
+        ]
+      : []),
   ].join("\n");
 }
 
 function commentBody(f: Finding & { fp: string }, exact: boolean): string {
-  const heading = f.pass || f.label ? badge(f) : `${SEVERITY[f.severity]} · ${f.category}`;
+  const heading =
+    f.pass || f.label ? badge(f) : `${SEVERITY[f.severity]} · ${f.category}`;
   const parts = [`**${heading}: ${clean(f.title)}**`, clean(f.body)];
   if (f.suggestion) parts.push(`**Suggested fix:** ${clean(f.suggestion)}`);
   // A one-click suggestion only when it replaces exactly the quoted lines.
-  if (exact && f.fix_code !== undefined) parts.push("```suggestion\n" + redactSecrets(f.fix_code.replace(/```/g, "ˋˋˋ")) + "\n```");
+  if (exact && f.fix_code !== undefined)
+    parts.push(
+      "```suggestion\n" +
+        redactSecrets(f.fix_code.replace(/```/g, "ˋˋˋ")) +
+        "\n```",
+    );
   return parts.join("\n\n");
 }
 
 function summaryEntry(f: Finding): string {
   const where = `\`${f.file}${f.placement.kind === "lines" ? `:${f.placement.start}` : `:${f.line}`}\``;
-  const text = [`- ${badge(f)} ${where} **${clean(f.title)}**`, `  ${clean(f.body).replace(/\n/g, "\n  ")}`];
-  if (f.suggestion) text.push(`  _Suggested fix:_ ${clean(f.suggestion).replace(/\n/g, "\n  ")}`);
+  const text = [
+    `- ${badge(f)} ${where} **${clean(f.title)}**`,
+    `  ${clean(f.body).replace(/\n/g, "\n  ")}`,
+  ];
+  if (f.suggestion)
+    text.push(
+      `  _Suggested fix:_ ${clean(f.suggestion).replace(/\n/g, "\n  ")}`,
+    );
   return text.join("\n");
 }
 
-function countsLine(found: number, posted: number, open: number, resolved: number, dropped: number): string {
-  const parts = [found === 0 ? "No new issues found" : `**${found} issue(s)**${posted ? ` (${posted} commented inline)` : ""}`];
+function countsLine(
+  found: number,
+  posted: number,
+  open: number,
+  resolved: number,
+  dropped: number,
+): string {
+  const parts = [
+    found === 0
+      ? "No new issues found"
+      : `**${found} issue(s)**${posted ? ` (${posted} commented inline)` : ""}`,
+  ];
   if (open) parts.push(`${open} still open from earlier`);
   if (resolved) parts.push(`${resolved} resolved`);
   if (dropped) parts.push(`${dropped} discarded by verification`);
   return parts.join(" · ");
 }
 
-function stored(f: Finding & { fp: string }, status: StoredFinding["status"], commented: boolean): StoredFinding {
-  return { fp: f.fp, file: f.file, line: f.line, severity: f.severity, title: f.title.slice(0, 200), body: f.body.slice(0, 500), status, commented };
+function stored(
+  f: Finding & { fp: string },
+  status: StoredFinding["status"],
+  commented: boolean,
+): StoredFinding {
+  return {
+    fp: f.fp,
+    file: f.file,
+    line: f.line,
+    severity: f.severity,
+    title: f.title.slice(0, 200),
+    body: f.body.slice(0, 500),
+    status,
+    commented,
+  };
 }
 
 /**
@@ -230,12 +355,17 @@ function stored(f: Finding & { fp: string }, status: StoredFinding["status"], co
  * resolved findings first, then the least severe open ones.
  */
 function encodeState(state: ReviewState): string {
-  const rank = (f: StoredFinding) => (f.status === "resolved" ? 3 : { high: 0, medium: 1, low: 2 }[f.severity]);
+  const rank = (f: StoredFinding) =>
+    f.status === "resolved" ? 3 : { high: 0, medium: 1, low: 2 }[f.severity];
   const findings = [...state.findings].sort((a, b) => rank(a) - rank(b));
-  let encoded = Buffer.from(JSON.stringify({ ...state, findings })).toString("base64");
+  let encoded = Buffer.from(JSON.stringify({ ...state, findings })).toString(
+    "base64",
+  );
   while (encoded.length > MAX_STATE_CHARS && findings.length > 0) {
     findings.pop();
-    encoded = Buffer.from(JSON.stringify({ ...state, findings })).toString("base64");
+    encoded = Buffer.from(JSON.stringify({ ...state, findings })).toString(
+      "base64",
+    );
   }
   return encoded;
 }
@@ -258,13 +388,22 @@ function fit(head: string[], sections: string[][], footer: string[]): string {
   const HEADER_LINES = 3; // "", "#### Title", ""
   const omitted = sections.map(() => 0);
   const main = () =>
-    [...head, ...sections.flatMap((s, i) => (omitted[i] ? [...s, `- …and ${omitted[i]} more not shown`] : s))].join("\n");
+    [
+      ...head,
+      ...sections.flatMap((s, i) =>
+        omitted[i] ? [...s, `- …and ${omitted[i]} more not shown`] : s,
+      ),
+    ].join("\n");
   const tail = footer.join("\n");
   let body = main();
   while (body.length + tail.length + 1 > MAX_BODY) {
     let idx = -1;
     sections.forEach((s, i) => {
-      if (s.length > HEADER_LINES && (idx < 0 || s.length > sections[idx]!.length)) idx = i;
+      if (
+        s.length > HEADER_LINES &&
+        (idx < 0 || s.length > sections[idx]!.length)
+      )
+        idx = i;
     });
     if (idx < 0) break;
     sections[idx]!.pop();

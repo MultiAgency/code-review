@@ -32,7 +32,11 @@ export function fakeGitHub(opts: {
           title: "t",
           body: "d",
           head: { sha: state.head },
-          base: { ref: "main", sha: opts.base ?? "base", repo: { clone_url: opts.cloneUrl ?? "file:///unused" } },
+          base: {
+            ref: "main",
+            sha: opts.base ?? "base",
+            repo: { clone_url: opts.cloneUrl ?? "file:///unused" },
+          },
         } as T;
       }
       if ((m = /^GET \/compare\/(\w+)\.\.\.(\w+)$/.exec(route))) {
@@ -40,7 +44,11 @@ export function fakeGitHub(opts: {
         return { status, merge_base_commit: { sha: m[1] } } as T;
       }
       if (route === "POST /issues/1/comments") {
-        const c = { id: state.nextId++, body: body.body, performed_via_github_app: { id: 42 } };
+        const c = {
+          id: state.nextId++,
+          body: body.body,
+          performed_via_github_app: { id: 42 },
+        };
         state.comments.push(c);
         return c as T;
       }
@@ -50,7 +58,11 @@ export function fakeGitHub(opts: {
         return c as T;
       }
       if (route === "POST /pulls/1/reviews") {
-        if (opts.rejectInline) throw new GitHubError(422, "Unprocessable: line must be part of the diff");
+        if (opts.rejectInline)
+          throw new GitHubError(
+            422,
+            "Unprocessable: line must be part of the diff",
+          );
         state.reviews.push(body);
         return {} as T;
       }

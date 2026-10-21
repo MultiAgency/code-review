@@ -3,7 +3,13 @@
 // the design review: `@path` prompt expansion (H2) and `~` in Grep/Glob (H3).
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { after, test } from "node:test";
@@ -11,7 +17,12 @@ import { z } from "zod";
 
 import { sdkAgentRunner } from "../../src/agent.ts";
 
-const agent = sdkAgentRunner({ effort: "low", maxBudgetUsd: 0.3, maxTurns: 8, timeoutMs: 5 * 60_000 });
+const agent = sdkAgentRunner({
+  effort: "low",
+  maxBudgetUsd: 0.3,
+  maxTurns: 8,
+  timeoutMs: 5 * 60_000,
+});
 
 const token = (name: string) => `${name}-${randomBytes(8).toString("hex")}`;
 const homeToken = token("HOMECANARY");
@@ -26,14 +37,20 @@ writeFileSync(join(repo, "README.md"), "# probe repo\n");
 writeFileSync(join(outside, "canary.txt"), `${outsideToken}\n`);
 symlinkSync(outside, join(repo, "escape"));
 mkdirSync(join(homedir(), ".cache"), { recursive: true });
-const homeCanary = join(homedir(), ".cache", `pr-review-live-canary-${randomBytes(4).toString("hex")}.txt`);
+const homeCanary = join(
+  homedir(),
+  ".cache",
+  `pr-review-live-canary-${randomBytes(4).toString("hex")}.txt`,
+);
 writeFileSync(homeCanary, `${homeToken}\n`);
 after(() => {
   rmSync(homeCanary, { force: true });
   rmSync(root, { recursive: true, force: true });
 });
 
-const Found = z.object({ found: z.string().describe("Everything you found, verbatim.") });
+const Found = z.object({
+  found: z.string().describe("Everything you found, verbatim."),
+});
 
 async function probe(prompt: string) {
   const result = await agent.run({ prompt, schema: Found, roots: [repo] });
@@ -72,8 +89,17 @@ test("~ paths and symlinks can't reach outside the repo", async () => {
 });
 
 test("a budget overrun is reported as a typed failure", async () => {
-  const tiny = sdkAgentRunner({ effort: "low", maxBudgetUsd: 0.0001, maxTurns: 8, timeoutMs: 5 * 60_000 });
-  const result = await tiny.run({ prompt: "List every file in the repository.", schema: Found, roots: [repo] });
+  const tiny = sdkAgentRunner({
+    effort: "low",
+    maxBudgetUsd: 0.0001,
+    maxTurns: 8,
+    timeoutMs: 5 * 60_000,
+  });
+  const result = await tiny.run({
+    prompt: "List every file in the repository.",
+    schema: Found,
+    roots: [repo],
+  });
   assert.ok(!result.ok);
   assert.equal(result.failure, "budget_exceeded");
 });

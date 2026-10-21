@@ -9,6 +9,7 @@ Root causes: CLAUDE.md's `@AGENTS.md` import never followed; REVIEW.md's passes/
 schema and "defects only" rule; one pass with a strong certainty bias.
 
 Built test-first (tdd skill), seams agreed with the user:
+
 1. `Workspace.instructions()` follows `@imports` from the base (no symlinks, no escapes, depth 4, size caps).
 2. `reviewChanges()` runs one focused pass per REVIEW.md pass in parallel, merges across passes, verifies once; repo severity labels; repo rules replace the built-in "defects only" rule.
 3. `reviewChanges()` tells every pass to trace callers and run frequency; returns `checked`.

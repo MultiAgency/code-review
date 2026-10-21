@@ -1,4 +1,9 @@
-import { compareCommits, getPullRequest, GitHubError, type GitHubClient } from "./github.js";
+import {
+  compareCommits,
+  getPullRequest,
+  GitHubError,
+  type GitHubClient,
+} from "./github.js";
 import {
   parseState,
   renderFailure,
@@ -20,14 +25,21 @@ export interface Publisher {
 }
 
 /** The dry-run adapter: writes what would be posted to a log. */
-export function logPublisher(log: (fields: Record<string, unknown>) => void): Publisher {
+export function logPublisher(
+  log: (fields: Record<string, unknown>) => void,
+): Publisher {
   return {
     async started() {},
     async prior() {
       return undefined;
     },
     async publish(report) {
-      log({ msg: "would post", inline: report.inline, fileComments: report.fileComments, summary: report.renderSummary(new Set()) });
+      log({
+        msg: "would post",
+        inline: report.inline,
+        fileComments: report.fileComments,
+        summary: report.renderSummary(new Set()),
+      });
     },
     async failed(reason) {
       log({ msg: "would report failure", reason });
@@ -67,8 +79,13 @@ export function githubPublisher(opts: {
 
   async function findSummary(): Promise<IssueComment | null> {
     if (summary === undefined) {
-      const comments = await gh.list<IssueComment>(`/repos/${repo}/issues/${prNumber}/comments`);
-      summary = comments.find((c) => c.body?.startsWith(SUMMARY_MARKER) && opts.isOwnComment(c)) ?? null;
+      const comments = await gh.list<IssueComment>(
+        `/repos/${repo}/issues/${prNumber}/comments`,
+      );
+      summary =
+        comments.find(
+          (c) => c.body?.startsWith(SUMMARY_MARKER) && opts.isOwnComment(c),
+        ) ?? null;
     }
     return summary;
   }
@@ -76,8 +93,16 @@ export function githubPublisher(opts: {
   async function upsertSummary(body: string) {
     const existing = await findSummary();
     summary = existing
-      ? await gh.request<IssueComment>("PATCH", `/repos/${repo}/issues/comments/${existing.id}`, { body })
-      : await gh.request<IssueComment>("POST", `/repos/${repo}/issues/${prNumber}/comments`, { body });
+      ? await gh.request<IssueComment>(
+          "PATCH",
+          `/repos/${repo}/issues/comments/${existing.id}`,
+          { body },
+        )
+      : await gh.request<IssueComment>(
+          "POST",
+          `/repos/${repo}/issues/${prNumber}/comments`,
+          { body },
+        );
   }
 
   async function react(content: "eyes" | "hooray" | "confused") {
@@ -86,7 +111,9 @@ export function githubPublisher(opts: {
         ? `/repos/${repo}/issues/comments/${opts.triggerCommentId}/reactions`
         : `/repos/${repo}/issues/${prNumber}/reactions`;
     // Best effort: a missing Issues permission must not fail the review.
-    await gh.request("POST", path, { content }).catch((error) => log({ msg: "reaction failed", error: String(error) }));
+    await gh
+      .request("POST", path, { content })
+      .catch((error) => log({ msg: "reaction failed", error: String(error) }));
   }
 
   /** Comments may only go on the reviewed commit while the PR still contains it. */
@@ -113,34 +140,49 @@ export function githubPublisher(opts: {
       if (planned > 0 && (await headStillInPr(report.headSha))) {
         if (report.inline.length > 0) {
           try {
-            await gh.request("POST", `/repos/${repo}/pulls/${prNumber}/reviews`, {
-              commit_id: report.headSha,
-              event: "COMMENT",
-              body: report.reviewBody,
-              comments: report.inline.map(toReviewComment),
-            });
+            await gh.request(
+              "POST",
+              `/repos/${repo}/pulls/${prNumber}/reviews`,
+              {
+                commit_id: report.headSha,
+                event: "COMMENT",
+                body: report.reviewBody,
+                comments: report.inline.map(toReviewComment),
+              },
+            );
             for (const c of report.inline) posted.add(c.fp);
           } catch (error) {
             // GitHub rejected a position; those findings go in the summary instead.
-            if (!(error instanceof GitHubError && error.status === 422)) throw error;
-            log({ msg: "inline comments rejected, folding into summary", error: error.message });
+            if (!(error instanceof GitHubError && error.status === 422))
+              throw error;
+            log({
+              msg: "inline comments rejected, folding into summary",
+              error: error.message,
+            });
           }
         }
         for (const c of report.fileComments) {
           try {
-            await gh.request("POST", `/repos/${repo}/pulls/${prNumber}/comments`, {
-              commit_id: report.headSha,
-              path: c.path,
-              body: c.body,
-              subject_type: "file",
-            });
+            await gh.request(
+              "POST",
+              `/repos/${repo}/pulls/${prNumber}/comments`,
+              {
+                commit_id: report.headSha,
+                path: c.path,
+                body: c.body,
+                subject_type: "file",
+              },
+            );
             posted.add(c.fp);
           } catch (error) {
-            if (!(error instanceof GitHubError && error.status === 422)) throw error;
+            if (!(error instanceof GitHubError && error.status === 422))
+              throw error;
           }
         }
       } else if (planned > 0) {
-        log({ msg: "PR head moved past the reviewed commit; findings go in the summary only" });
+        log({
+          msg: "PR head moved past the reviewed commit; findings go in the summary only",
+        });
       }
       await upsertSummary(report.renderSummary(posted));
       await react("hooray");
@@ -157,7 +199,9 @@ function toReviewComment(c: PlannedComment) {
     path: c.path,
     line: c.line,
     side: "RIGHT",
-    ...(c.startLine !== undefined ? { start_line: c.startLine, start_side: "RIGHT" } : {}),
+    ...(c.startLine !== undefined
+      ? { start_line: c.startLine, start_side: "RIGHT" }
+      : {}),
     body: c.body,
   };
 }

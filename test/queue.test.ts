@@ -7,13 +7,22 @@ import type { JobOutcome } from "../src/job.ts";
 import { openReviewQueue, type Work } from "../src/queue.ts";
 import type { ReviewJob } from "../src/triggers.ts";
 
-const job = (pr: number, over: Partial<ReviewJob> = {}): ReviewJob => ({ repo: "o/r", prNumber: pr, reason: "opened", ...over });
+const job = (pr: number, over: Partial<ReviewJob> = {}): ReviewJob => ({
+  repo: "o/r",
+  prNumber: pr,
+  reason: "opened",
+  ...over,
+});
 const done: JobOutcome = { kind: "done", costUsd: 0 };
 const fast = { concurrency: 2, maxAttempts: 3, backoffMs: () => 5, pollMs: 5 };
 
 /** Work that records calls and finishes when told to. */
 function controlled() {
-  const calls: Array<{ job: ReviewJob; signal: AbortSignal; finish: (o?: JobOutcome) => void }> = [];
+  const calls: Array<{
+    job: ReviewJob;
+    signal: AbortSignal;
+    finish: (o?: JobOutcome) => void;
+  }> = [];
   let active = 0;
   let peak = 0;
   const work: Work = (j, signal) =>
@@ -85,7 +94,10 @@ test("transient failures retry with backoff; others don't", async () => {
     { kind: "failed", reason: "usage_limit", transient: false, error: "429" },
   ];
   const seen: number[] = [];
-  const q = openReviewQueue(async (j) => (seen.push(j.prNumber), outcomes.shift()!), { ...fast, dbPath: ":memory:" });
+  const q = openReviewQueue(
+    async (j) => (seen.push(j.prNumber), outcomes.shift()!),
+    { ...fast, dbPath: ":memory:" },
+  );
   q.submit(job(1), "a");
   await q.whenIdle();
   assert.deepEqual(seen, [1, 1, 1]);
@@ -97,10 +109,16 @@ test("transient failures retry with backoff; others don't", async () => {
 
 test("gives up after maxAttempts", async () => {
   let n = 0;
-  const q = openReviewQueue(async () => (n++, { kind: "failed", reason: "git", transient: true, error: "x" }), {
-    ...fast,
-    dbPath: ":memory:",
-  });
+  const q = openReviewQueue(
+    async () => (
+      n++,
+      { kind: "failed", reason: "git", transient: true, error: "x" }
+    ),
+    {
+      ...fast,
+      dbPath: ":memory:",
+    },
+  );
   q.submit(job(1), "a");
   await q.whenIdle();
   assert.equal(n, 3);
@@ -141,13 +159,16 @@ test("close waits for running jobs within the grace period", async () => {
 test("a daily spend cap holds further jobs until the next UTC day", async () => {
   let clock = Date.parse("2026-10-21T10:00:00Z");
   const seen: number[] = [];
-  const q = openReviewQueue(async (j) => (seen.push(j.prNumber), { kind: "done", costUsd: 5 }), {
-    ...fast,
-    concurrency: 1,
-    dbPath: ":memory:",
-    dailyBudgetUsd: 8,
-    now: () => clock,
-  });
+  const q = openReviewQueue(
+    async (j) => (seen.push(j.prNumber), { kind: "done", costUsd: 5 }),
+    {
+      ...fast,
+      concurrency: 1,
+      dbPath: ":memory:",
+      dailyBudgetUsd: 8,
+      now: () => clock,
+    },
+  );
   q.submit(job(1), "a");
   q.submit(job(2), "b");
   q.submit(job(3), "c");
@@ -165,7 +186,16 @@ test("a daily spend cap holds further jobs until the next UTC day", async () => 
 test("failed jobs count toward the daily cap too", async () => {
   const seen: number[] = [];
   const q = openReviewQueue(
-    async (j) => (seen.push(j.prNumber), { kind: "failed", reason: "budget", transient: false, error: "x", costUsd: 9 }),
+    async (j) => (
+      seen.push(j.prNumber),
+      {
+        kind: "failed",
+        reason: "budget",
+        transient: false,
+        error: "x",
+        costUsd: 9,
+      }
+    ),
     { ...fast, dbPath: ":memory:", dailyBudgetUsd: 8, concurrency: 1 },
   );
   q.submit(job(1), "a");

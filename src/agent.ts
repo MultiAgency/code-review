@@ -60,11 +60,18 @@ export function sdkAgentRunner(options: SdkAgentOptions): AgentRunner {
     async run<T>(request: AgentRequest<T>): Promise<AgentResult<T>> {
       const abortController = new AbortController();
       const timeout = AbortSignal.timeout(options.timeoutMs);
-      const signal = request.signal ? AbortSignal.any([request.signal, timeout]) : timeout;
+      const signal = request.signal
+        ? AbortSignal.any([request.signal, timeout])
+        : timeout;
       if (signal.aborted) abortController.abort();
-      signal.addEventListener("abort", () => abortController.abort(), { once: true });
+      signal.addEventListener("abort", () => abortController.abort(), {
+        once: true,
+      });
 
-      const jsonSchema = z.toJSONSchema(request.schema) as Record<string, unknown>;
+      const jsonSchema = z.toJSONSchema(request.schema) as Record<
+        string,
+        unknown
+      >;
       delete jsonSchema.$schema;
 
       let result: SDKResultMessage | undefined;
@@ -89,9 +96,16 @@ export function sdkAgentRunner(options: SdkAgentOptions): AgentRunner {
             verbatimPrompts: true,
             persistSession: false,
             env: claudeEnv(),
-            systemPrompt: { type: "preset", preset: "claude_code", append: REVIEW_MODE },
+            systemPrompt: {
+              type: "preset",
+              preset: "claude_code",
+              append: REVIEW_MODE,
+            },
             outputFormat: { type: "json_schema", schema: jsonSchema },
-            maxBudgetUsd: Math.min(options.maxBudgetUsd, request.maxBudgetUsd ?? Infinity),
+            maxBudgetUsd: Math.min(
+              options.maxBudgetUsd,
+              request.maxBudgetUsd ?? Infinity,
+            ),
             maxTurns: options.maxTurns,
             abortController,
           },
@@ -103,30 +117,78 @@ export function sdkAgentRunner(options: SdkAgentOptions): AgentRunner {
         // The stream can throw after delivering the result (the CLI exits non-zero
         // on error results), so a result that already arrived decides the outcome.
         if (!result || signal.aborted) {
-          const failure = timeout.aborted ? "timeout" : signal.aborted ? "aborted" : "crashed";
-          return { ok: false, failure, detail: errorText(error), costUsd: result?.total_cost_usd ?? 0 };
+          const failure = timeout.aborted
+            ? "timeout"
+            : signal.aborted
+              ? "aborted"
+              : "crashed";
+          return {
+            ok: false,
+            failure,
+            detail: errorText(error),
+            costUsd: result?.total_cost_usd ?? 0,
+          };
         }
       }
 
-      if (!result) return { ok: false, failure: "crashed", detail: "Claude exited without a result.", costUsd: 0 };
+      if (!result)
+        return {
+          ok: false,
+          failure: "crashed",
+          detail: "Claude exited without a result.",
+          costUsd: 0,
+        };
       const costUsd = result.total_cost_usd;
       switch (result.subtype) {
         case "error_max_budget_usd":
-          return { ok: false, failure: "budget_exceeded", detail: result.errors.join("; "), costUsd };
+          return {
+            ok: false,
+            failure: "budget_exceeded",
+            detail: result.errors.join("; "),
+            costUsd,
+          };
         case "error_max_turns":
-          return { ok: false, failure: "turn_limit", detail: result.errors.join("; "), costUsd };
+          return {
+            ok: false,
+            failure: "turn_limit",
+            detail: result.errors.join("; "),
+            costUsd,
+          };
         case "error_max_structured_output_retries":
-          return { ok: false, failure: "bad_output", detail: result.errors.join("; "), costUsd };
+          return {
+            ok: false,
+            failure: "bad_output",
+            detail: result.errors.join("; "),
+            costUsd,
+          };
         case "error_during_execution":
-          return { ok: false, failure: "crashed", detail: result.errors.join("; "), costUsd };
+          return {
+            ok: false,
+            failure: "crashed",
+            detail: result.errors.join("; "),
+            costUsd,
+          };
         case "success": {
           if (result.is_error) {
             const status = result.api_error_status ?? 0;
-            const failure = [401, 403, 429].includes(status) ? "auth_or_limit" : "crashed";
-            return { ok: false, failure, detail: `API error ${status}: ${result.result}`, costUsd };
+            const failure = [401, 403, 429].includes(status)
+              ? "auth_or_limit"
+              : "crashed";
+            return {
+              ok: false,
+              failure,
+              detail: `API error ${status}: ${result.result}`,
+              costUsd,
+            };
           }
           const parsed = request.schema.safeParse(result.structured_output);
-          if (!parsed.success) return { ok: false, failure: "bad_output", detail: parsed.error.message, costUsd };
+          if (!parsed.success)
+            return {
+              ok: false,
+              failure: "bad_output",
+              detail: parsed.error.message,
+              costUsd,
+            };
           return { ok: true, data: parsed.data, costUsd };
         }
       }
@@ -137,7 +199,6 @@ export function sdkAgentRunner(options: SdkAgentOptions): AgentRunner {
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
-
 
 /**
  * Denies any tool call that reaches outside the given directories, resolving
@@ -168,7 +229,8 @@ export function confineToRoots(roots: string[]): HookCallback {
   return async (input) => {
     if (input.hook_event_name !== "PreToolUse") return {};
     if (input.tool_name === OUTPUT_TOOL) return {};
-    if (!TOOLS.includes(input.tool_name)) return deny(`${input.tool_name} is not available in review mode.`);
+    if (!TOOLS.includes(input.tool_name))
+      return deny(`${input.tool_name} is not available in review mode.`);
     const args = (input.tool_input ?? {}) as Record<string, unknown>;
     for (const key of ["file_path", "path"]) {
       const value = args[key];
@@ -183,7 +245,10 @@ export function confineToRoots(roots: string[]): HookCallback {
       const value = args[key];
       if (input.tool_name !== "Grep" || key === "glob") {
         // `..` is rejected anywhere, including inside braces like `{..,x}`.
-        if (typeof value === "string" && (isAbsolute(value) || value.startsWith("~") || value.includes(".."))) {
+        if (
+          typeof value === "string" &&
+          (isAbsolute(value) || value.startsWith("~") || value.includes(".."))
+        ) {
           return deny(`${key} must be relative to the repository.`);
         }
       }

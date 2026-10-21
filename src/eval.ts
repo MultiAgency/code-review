@@ -24,7 +24,9 @@ export interface EvalCase {
 const LEDGER = /<!-- ai-review-ledger (\{[\s\S]*?\}) -->/;
 
 /** Cases from a PR's comments, in comment order; a later ledger for the same commit replaces an earlier one. */
-export function ledgerCases(comments: Array<{ body?: string | null }>): EvalCase[] {
+export function ledgerCases(
+  comments: Array<{ body?: string | null }>,
+): EvalCase[] {
   const bySha = new Map<string, EvalCase>();
   for (const comment of comments) {
     const match = LEDGER.exec(comment.body ?? "");
@@ -35,9 +37,14 @@ export function ledgerCases(comments: Array<{ body?: string | null }>): EvalCase
     } catch {
       continue;
     }
-    if (typeof ledger.sha !== "string" || !Array.isArray(ledger.findings)) continue;
+    if (typeof ledger.sha !== "string" || !Array.isArray(ledger.findings))
+      continue;
     const expected = (ledger.findings as LedgerFinding[]).filter(
-      (f) => f && f.status === "open" && typeof f.path === "string" && typeof f.line === "number",
+      (f) =>
+        f &&
+        f.status === "open" &&
+        typeof f.path === "string" &&
+        typeof f.line === "number",
     );
     bySha.delete(ledger.sha);
     bySha.set(ledger.sha, { sha: ledger.sha, expected });
@@ -104,7 +111,10 @@ export function score<E extends LedgerFinding, F extends Found>(
 
 /** Decides which candidate, if any, reports the same defect as `expected`. */
 export interface SameDefectJudge {
-  match<F extends Found>(expected: LedgerFinding, candidates: F[]): Promise<number | null>;
+  match<F extends Found>(
+    expected: LedgerFinding,
+    candidates: F[],
+  ): Promise<number | null>;
 }
 
 /**
@@ -122,9 +132,17 @@ export async function judgedScore<E extends LedgerFinding, F extends Found>(
   const hits: Array<{ expected: E; found: F }> = [];
   const misses: E[] = [];
   for (const e of expected) {
-    const open = found.map((f, i) => ({ f, i })).filter(({ i }) => !used.has(i));
-    const pick = open.length ? await judge.match(e, open.map(({ f }) => f)) : null;
-    const chosen = pick === null || !Number.isInteger(pick) ? undefined : open[pick];
+    const open = found
+      .map((f, i) => ({ f, i }))
+      .filter(({ i }) => !used.has(i));
+    const pick = open.length
+      ? await judge.match(
+          e,
+          open.map(({ f }) => f),
+        )
+      : null;
+    const chosen =
+      pick === null || !Number.isInteger(pick) ? undefined : open[pick];
     if (!chosen) misses.push(e);
     else {
       used.add(chosen.i);
@@ -142,7 +160,11 @@ export async function judgedScore<E extends LedgerFinding, F extends Found>(
 }
 
 const Verdict = z.object({
-  match: z.number().int().nullable().describe("Index of the candidate that reports the same defect, or null."),
+  match: z
+    .number()
+    .int()
+    .nullable()
+    .describe("Index of the candidate that reports the same defect, or null."),
   reason: z.string(),
 });
 
@@ -150,7 +172,10 @@ const Verdict = z.object({
  * A judge backed by an agent pass (cheap: low effort, nothing to read). It is
  * asked for the same root cause, not the same words or line.
  */
-export function agentJudge(agent: AgentRunner, scratchDir: string): SameDefectJudge {
+export function agentJudge(
+  agent: AgentRunner,
+  scratchDir: string,
+): SameDefectJudge {
   return {
     async match(expected, candidates) {
       const list = candidates

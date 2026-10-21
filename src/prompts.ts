@@ -42,8 +42,12 @@ export function flagRules(repoDefinesWhatToReport: boolean): string {
     "- When confidence is limited but the impact is high (data loss, security, money, permissions), report it and say what remains uncertain. Otherwise prefer not reporting over guessing.",
     "- State severity accurately; don't overstate impact.",
     ...(repoDefinesWhatToReport
-      ? ["- Report what the repository's review instructions below ask for, at the severities they define."]
-      : ["- Don't flag style, naming or intentional design choices unless they cause a clear defect."]),
+      ? [
+          "- Report what the repository's review instructions below ask for, at the severities they define.",
+        ]
+      : [
+          "- Don't flag style, naming or intentional design choices unless they cause a clear defect.",
+        ]),
     "",
     "Each finding must point at a line on the NEW side of a changed file, with a path relative to the repository root. An empty list is a fine answer.",
   ].join("\n");

@@ -76,17 +76,17 @@ PR content is untrusted: a PR can try to steer the reviewer through prompt injec
 measures limit what such a PR can do. Live probes in `npm run test:live` check the
 filesystem ones against the real SDK.
 
-| Risk | Mitigation |
-|---|---|
-| Outsiders spend the review budget | Automatic reviews only for trusted authors; trigger comments only from trusted members; bots excluded. |
-| PR text pulls in files via `@path` mentions | `verbatimPrompts: true`: the prompt is delivered as written, with no file-mention expansion. |
-| PR adds `.claude/settings.json` hooks, skills, `.mcp.json` | `settingSources: []`, `strictMcpConfig: true`: nothing is loaded from disk. |
-| PR rewrites its own review rules | `CLAUDE.md` / `REVIEW.md` are read from the base branch. |
-| Model runs commands or edits files | Tools are `Read`, `Grep` and `Glob` only, with `permissionMode: "dontAsk"`. |
-| Reading outside the repo (`/proc/self/environ`, `~/…`, symlinks in the PR) | A `PreToolUse` hook resolves real paths and denies anything outside the checkout, `~` paths, and `..` in glob patterns. |
-| Leaking credentials | Claude's process gets only its own auth (no GitHub credentials or webhook secret). Git gets neither. Secret values are redacted from everything posted. |
-| Forged state or one-click suggestions | Only the service's own summary comment is trusted as state. Model text can't open `suggestion` blocks or write hidden markers. |
-| Runaway cost or hangs | A budget per review shared by its passes, per-pass caps, a daily spend cap, turn and time limits, a job timeout, per-call timeouts on git and GitHub, and bounded concurrency. |
+| Risk                                                                       | Mitigation                                                                                                                                                                     |
+| -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Outsiders spend the review budget                                          | Automatic reviews only for trusted authors; trigger comments only from trusted members; bots excluded.                                                                         |
+| PR text pulls in files via `@path` mentions                                | `verbatimPrompts: true`: the prompt is delivered as written, with no file-mention expansion.                                                                                   |
+| PR adds `.claude/settings.json` hooks, skills, `.mcp.json`                 | `settingSources: []`, `strictMcpConfig: true`: nothing is loaded from disk.                                                                                                    |
+| PR rewrites its own review rules                                           | `CLAUDE.md` / `REVIEW.md` are read from the base branch.                                                                                                                       |
+| Model runs commands or edits files                                         | Tools are `Read`, `Grep` and `Glob` only, with `permissionMode: "dontAsk"`.                                                                                                    |
+| Reading outside the repo (`/proc/self/environ`, `~/…`, symlinks in the PR) | A `PreToolUse` hook resolves real paths and denies anything outside the checkout, `~` paths, and `..` in glob patterns.                                                        |
+| Leaking credentials                                                        | Claude's process gets only its own auth (no GitHub credentials or webhook secret). Git gets neither. Secret values are redacted from everything posted.                        |
+| Forged state or one-click suggestions                                      | Only the service's own summary comment is trusted as state. Model text can't open `suggestion` blocks or write hidden markers.                                                 |
+| Runaway cost or hangs                                                      | A budget per review shared by its passes, per-pass caps, a daily spend cap, turn and time limits, a job timeout, per-call timeouts on git and GitHub, and bounded concurrency. |
 
 The model credential is necessarily visible to the Claude process.
 
@@ -99,10 +99,10 @@ In GitHub, go to Settings → Developer settings → GitHub Apps → New GitHub 
 - **Webhook URL:** `https://<your-host>/webhook`
 - **Webhook secret:** a long random string (`GITHUB_WEBHOOK_SECRET`)
 - **Repository permissions:**
-  - Contents: *Read*
-  - Pull requests: *Read & write* (for reviews and comments)
-  - Issues: *Read & write* (for the summary comment and reactions)
-  - Metadata: *Read*
+  - Contents: _Read_
+  - Pull requests: _Read & write_ (for reviews and comments)
+  - Issues: _Read & write_ (for the summary comment and reactions)
+  - Metadata: _Read_
 - **Subscribe to events:** Pull request, Issue comment
 
 Generate a private key, then install the app on the repos you want reviewed.
@@ -140,33 +140,33 @@ Things to know:
 Every setting is validated at startup. A bad value stops the service with a list of what's
 wrong.
 
-| Variable | Default | |
-|---|---|---|
-| `GITHUB_WEBHOOK_SECRET` | (required) | Must match the app's webhook secret |
-| `GITHUB_APP_ID` / `GITHUB_APP_PRIVATE_KEY` | | App auth. The PEM may use literal `\n` |
-| `GITHUB_TOKEN` | | PAT, when not using an app |
-| `GITHUB_API_URL` | `https://api.github.com` | Set for GitHub Enterprise Server |
-| `CLAUDE_CODE_OAUTH_TOKEN` | | Model access (see above) |
-| `POST_REVIEWS` | `false` | `true` posts to GitHub; otherwise reviews are only logged |
-| `ALLOWED_REPOS` | (all) | Comma-separated `owner/repo` allowlist |
-| `REVIEW_TRIGGER` | `@private-review` | PR comment phrase that requests a review |
-| `REVIEW_MODEL` | (Claude Code default) | Pin a model ID, e.g. `claude-opus-5-5` |
-| `REVIEW_EFFORT` | `high` | `low` … `max` |
-| `REVIEW_VERIFY` | `true` | Run the verify pass |
-| `REVIEW_BUDGET_USD` | `12` | Per review, across all passes (80% review passes, 20% verify) |
-| `REVIEW_MAX_BUDGET_USD` | `10` | Ceiling for any single pass |
-| `REVIEW_SINGLE_PASS` | `true` | One review pass covering every `REVIEW.md` pass. `false` runs one focused pass each (≈2× cost; on our eval it added a few real findings, mostly nits) |
-| `REVIEW_MAX_PARALLEL_PASSES` | `2` | Review passes running at once within one review (multi-pass mode) |
-| `DAILY_BUDGET_USD` | `50` | Reviews stop starting once a UTC day's spend reaches this; they wait for the next day. `0` = no cap |
-| `REVIEW_MAX_TURNS` | `80` | Per pass |
-| `REVIEW_PASS_TIMEOUT_MIN` | `20` | Per pass |
-| `REVIEW_JOB_TIMEOUT_MIN` | `50` | Whole review, including fetch and publish |
-| `REVIEW_MAX_INLINE_COMMENTS` | `10` | Per review; the rest go in the summary |
-| `REVIEW_MAX_ATTEMPTS` | `3` | Attempts for transient failures |
-| `MAX_CONCURRENT_REVIEWS` | `2` | Each review is one Claude Code process |
-| `QUEUE_DB` | `/data/jobs.db` | Put it on a persistent volume |
-| `SHUTDOWN_GRACE_SECONDS` | `25` | Time running reviews get to finish on SIGTERM |
-| `PORT` | `8080` | |
+| Variable                                   | Default                  |                                                                                                                                                       |
+| ------------------------------------------ | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GITHUB_WEBHOOK_SECRET`                    | (required)               | Must match the app's webhook secret                                                                                                                   |
+| `GITHUB_APP_ID` / `GITHUB_APP_PRIVATE_KEY` |                          | App auth. The PEM may use literal `\n`                                                                                                                |
+| `GITHUB_TOKEN`                             |                          | PAT, when not using an app                                                                                                                            |
+| `GITHUB_API_URL`                           | `https://api.github.com` | Set for GitHub Enterprise Server                                                                                                                      |
+| `CLAUDE_CODE_OAUTH_TOKEN`                  |                          | Model access (see above)                                                                                                                              |
+| `POST_REVIEWS`                             | `false`                  | `true` posts to GitHub; otherwise reviews are only logged                                                                                             |
+| `ALLOWED_REPOS`                            | (all)                    | Comma-separated `owner/repo` allowlist                                                                                                                |
+| `REVIEW_TRIGGER`                           | `@private-review`        | PR comment phrase that requests a review                                                                                                              |
+| `REVIEW_MODEL`                             | (Claude Code default)    | Pin a model ID, e.g. `claude-opus-5-5`                                                                                                                |
+| `REVIEW_EFFORT`                            | `high`                   | `low` … `max`                                                                                                                                         |
+| `REVIEW_VERIFY`                            | `true`                   | Run the verify pass                                                                                                                                   |
+| `REVIEW_BUDGET_USD`                        | `12`                     | Per review, across all passes (80% review passes, 20% verify)                                                                                         |
+| `REVIEW_MAX_BUDGET_USD`                    | `10`                     | Ceiling for any single pass                                                                                                                           |
+| `REVIEW_SINGLE_PASS`                       | `true`                   | One review pass covering every `REVIEW.md` pass. `false` runs one focused pass each (≈2× cost; on our eval it added a few real findings, mostly nits) |
+| `REVIEW_MAX_PARALLEL_PASSES`               | `2`                      | Review passes running at once within one review (multi-pass mode)                                                                                     |
+| `DAILY_BUDGET_USD`                         | `50`                     | Reviews stop starting once a UTC day's spend reaches this; they wait for the next day. `0` = no cap                                                   |
+| `REVIEW_MAX_TURNS`                         | `80`                     | Per pass                                                                                                                                              |
+| `REVIEW_PASS_TIMEOUT_MIN`                  | `20`                     | Per pass                                                                                                                                              |
+| `REVIEW_JOB_TIMEOUT_MIN`                   | `50`                     | Whole review, including fetch and publish                                                                                                             |
+| `REVIEW_MAX_INLINE_COMMENTS`               | `10`                     | Per review; the rest go in the summary                                                                                                                |
+| `REVIEW_MAX_ATTEMPTS`                      | `3`                      | Attempts for transient failures                                                                                                                       |
+| `MAX_CONCURRENT_REVIEWS`                   | `2`                      | Each review is one Claude Code process                                                                                                                |
+| `QUEUE_DB`                                 | `/data/jobs.db`          | Put it on a persistent volume                                                                                                                         |
+| `SHUTDOWN_GRACE_SECONDS`                   | `25`                     | Time running reviews get to finish on SIGTERM                                                                                                         |
+| `PORT`                                     | `8080`                   |                                                                                                                                                       |
 
 ### 4. Deploy
 

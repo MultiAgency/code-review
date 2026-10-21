@@ -11,21 +11,32 @@ import { runReviewJob } from "./job.js";
 import { logPublisher } from "./publisher.js";
 import { openPullRequestWorkspace } from "./workspace.js";
 
-const { values } = parseArgs({ options: { repo: { type: "string" }, pr: { type: "string" } } });
+const { values } = parseArgs({
+  options: { repo: { type: "string" }, pr: { type: "string" } },
+});
 if (!values.repo || !values.pr) {
   console.error("usage: smoke --repo owner/name --pr N   (needs GITHUB_TOKEN)");
   process.exit(1);
 }
 const config = loadConfig();
 const token = installationToken(
-  { apiUrl: config.GITHUB_API_URL, ...(config.GITHUB_TOKEN ? { token: config.GITHUB_TOKEN } : {}) },
+  {
+    apiUrl: config.GITHUB_API_URL,
+    ...(config.GITHUB_TOKEN ? { token: config.GITHUB_TOKEN } : {}),
+  },
   undefined,
 );
 const gh = githubClient({ apiUrl: config.GITHUB_API_URL, token });
-const log = (fields: Record<string, unknown>) => console.log(JSON.stringify(fields, null, 2));
+const log = (fields: Record<string, unknown>) =>
+  console.log(JSON.stringify(fields, null, 2));
 const started = Date.now();
 const outcome = await runReviewJob(
-  { repo: values.repo, prNumber: Number(values.pr), reason: "comment", full: true },
+  {
+    repo: values.repo,
+    prNumber: Number(values.pr),
+    reason: "comment",
+    full: true,
+  },
   {
     agent: sdkAgentRunner(agentOptions(config)),
     reviewOptions: reviewOptions(config),
@@ -38,4 +49,9 @@ const outcome = await runReviewJob(
   },
   new AbortController().signal,
 );
-console.log(JSON.stringify({ outcome, seconds: Math.round((Date.now() - started) / 1000) }));
+console.log(
+  JSON.stringify({
+    outcome,
+    seconds: Math.round((Date.now() - started) / 1000),
+  }),
+);
