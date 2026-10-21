@@ -50,10 +50,14 @@ Findings so far:
 - Prompt additions, extra passes and more effort all left recall at ~17/26; the ceiling appears to be
   elsewhere (see the label audit).
 
-## In progress (stopped 2026-10-21 at the Claude usage limit)
+## Tuning set 2
 
-Tuning set 2 (`--earlier-rounds` on #131 #132 #134 #135 #144 #148 #173 #180 #183 #207; 15 cases) was
-cut off by the session limit (429) part-way: baseline finished 8 cases (recall 15/21, Compliance 1/4),
-`--extra-passes Compliance` finished 7 (16/18, Compliance 2/3). Different case sets, so not yet
-comparable. Resume with `--resume --out <same file>` once usage resets; then audit this set's labels
-(clones with its commits: /tmp/backtest-blE9Jr/repo, /tmp/backtest-zF4rFq/repo) and score on valid labels.
+Earlier ledger rounds of #131 #132 #134 #135 #144 #148 #173 #180 #183 #207 (`--earlier-rounds`; 16
+cases, 39 labels, 36 valid after audit). PRs that are also in the held-out set were left out.
+
+| Version | Valid recall | Compliance | Important | Findings | Cost |
+|---|---|---|---|---|---|
+| 1 pass (default) | 27/36 (75%) | 3/7 | 20/22 | 59 | $10.76 |
+| 1 pass + focused Compliance pass | 31/36 (86%) | 4/7 | 22/22 | 67 | $17.27 |
+
+One run each (the first attempt was cut off by the usage limit and resumed with `--resume`).
