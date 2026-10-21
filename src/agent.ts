@@ -6,6 +6,7 @@ import {
   type HookCallback,
   type SDKAssistantMessageError,
   type SDKResultMessage,
+  type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 import { claudeEnv, redactSecrets } from "./env.js";
@@ -62,6 +63,8 @@ export interface SdkAgentOptions {
   maxBudgetUsd: number;
   maxTurns: number;
   timeoutMs: number;
+  /** After an interrupt, how long Claude gets to stop before its process is killed. Default 10s. */
+  interruptGraceMs?: number;
   /** The SDK's `query`; tests replace it with a scripted message stream. */
   query?: typeof sdkQuery;
 }
@@ -104,9 +107,19 @@ export function sdkAgentRunner(options: SdkAgentOptions): AgentRunner {
       ? AbortSignal.any([request.signal, timeout])
       : timeout;
     if (signal.aborted) abortController.abort();
-    signal.addEventListener("abort", () => abortController.abort(), {
-      once: true,
-    });
+    // The prompt is streamed in as one message, which is what lets a pass be
+    // interrupted: Claude then ends with a result that carries the cost so far,
+    // where killing the process loses it. Input ends once the result arrives.
+    let endInput!: () => void;
+    const inputEnded = new Promise<void>((resolve) => (endInput = resolve));
+    const input = (async function* (): AsyncGenerator<SDKUserMessage> {
+      yield {
+        type: "user",
+        message: { role: "user", content: request.prompt },
+        parent_tool_use_id: null,
+      };
+      await inputEnded;
+    })();
 
     const jsonSchema = z.toJSONSchema(request.schema) as Record<
       string,
@@ -117,9 +130,10 @@ export function sdkAgentRunner(options: SdkAgentOptions): AgentRunner {
     let result: SDKResultMessage | undefined;
     // What Claude said about a failed API call, before the result reports it.
     const api: ApiSignals = {};
+    let stop = () => {};
     try {
       const q = query({
-        prompt: request.prompt,
+        prompt: input,
         options: {
           ...(options.model ? { model: options.model } : {}),
           effort: options.effort,
@@ -135,6 +149,7 @@ export function sdkAgentRunner(options: SdkAgentOptions): AgentRunner {
           strictMcpConfig: true,
           // The prompt carries PR-author text. Without this the CLI expands `@path`
           // mentions in it into file attachments, which bypass the PreToolUse hook.
+          // (Checked live for streamed prompts too.)
           verbatimPrompts: true,
           persistSession: false,
           env: claudeEnv(options.oauthToken),
@@ -153,9 +168,20 @@ export function sdkAgentRunner(options: SdkAgentOptions): AgentRunner {
           stderr: onStderr,
         },
       });
+      stop = () => {
+        q.interrupt().catch(() => abortController.abort());
+        setTimeout(
+          () => abortController.abort(),
+          options.interruptGraceMs ?? 10_000,
+        ).unref();
+      };
+      if (signal.aborted) abortController.abort();
+      else signal.addEventListener("abort", stop, { once: true });
       for await (const message of q) {
-        if (message.type === "result") result = message;
-        else if (message.type === "assistant" && message.error)
+        if (message.type === "result") {
+          result = message;
+          endInput();
+        } else if (message.type === "assistant" && message.error)
           api.error = message.error;
         else if (
           message.type === "rate_limit_event" &&
@@ -179,7 +205,17 @@ export function sdkAgentRunner(options: SdkAgentOptions): AgentRunner {
           costUsd: result?.total_cost_usd ?? 0,
         };
       }
+    } finally {
+      endInput();
+      signal.removeEventListener("abort", stop);
     }
+    if (signal.aborted)
+      return {
+        ok: false,
+        failure: timeout.aborted ? "timeout" : "aborted",
+        detail: "Stopped before Claude finished.",
+        costUsd: result?.total_cost_usd ?? 0,
+      };
 
     if (!result)
       return {

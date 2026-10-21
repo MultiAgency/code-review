@@ -121,3 +121,63 @@ test("a prompt too long for Claude's context is its own failure", async () => {
   ]).run(req);
   assert.equal(!result.ok && result.failure, "too_large");
 });
+
+/** A `query` that runs until interrupted, then reports what the pass cost so far, like the CLI does. */
+function interruptible(opts: { honoursInterrupt: boolean; seen: { prompt?: unknown; interrupted: boolean } }) {
+  return ((params: { prompt: unknown; options: { abortController: AbortController } }) => {
+    opts.seen.prompt = params.prompt;
+    let stop!: () => void;
+    const stopped = new Promise<void>((r) => (stop = r));
+    params.options.abortController.signal.addEventListener("abort", () => stop());
+    const gen = (async function* () {
+      await stopped;
+      if (params.options.abortController.signal.aborted) throw new Error("Claude Code process aborted by user");
+      yield {
+        type: "result",
+        subtype: "error_during_execution",
+        is_error: true,
+        terminal_reason: "aborted_streaming",
+        errors: ["interrupted"],
+        total_cost_usd: 0.37,
+      };
+      throw new Error("Claude Code returned an error result");
+    })();
+    return Object.assign(gen, {
+      async interrupt() {
+        opts.seen.interrupted = true;
+        if (opts.honoursInterrupt) stop();
+      },
+    });
+  }) as unknown as SdkAgentOptions["query"];
+}
+
+test("on timeout Claude is interrupted, not killed, so the pass's cost so far is recorded", async () => {
+  const seen = { interrupted: false } as { prompt?: unknown; interrupted: boolean };
+  const result = await sdkAgentRunner({
+    effort: "high",
+    maxBudgetUsd: 5,
+    maxTurns: 10,
+    timeoutMs: 50,
+    query: interruptible({ honoursInterrupt: true, seen }),
+  }).run(req);
+  assert.ok(seen.interrupted);
+  assert.deepEqual(!result.ok && [result.failure, result.costUsd], ["timeout", 0.37]);
+  // The prompt is streamed in (interrupt needs it), as one user message.
+  assert.equal(typeof (seen.prompt as AsyncIterable<unknown>)[Symbol.asyncIterator], "function");
+});
+
+test("if Claude ignores the interrupt, the process is stopped after a grace period", async () => {
+  const seen = { interrupted: false } as { prompt?: unknown; interrupted: boolean };
+  const ac = new AbortController();
+  setTimeout(() => ac.abort(), 20);
+  const result = await sdkAgentRunner({
+    effort: "high",
+    maxBudgetUsd: 5,
+    maxTurns: 10,
+    timeoutMs: 60_000,
+    interruptGraceMs: 50,
+    query: interruptible({ honoursInterrupt: false, seen }),
+  }).run({ ...req, signal: ac.signal });
+  assert.ok(seen.interrupted);
+  assert.deepEqual(!result.ok && [result.failure, result.costUsd], ["aborted", 0]);
+});
