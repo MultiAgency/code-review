@@ -1,4 +1,4 @@
-claude-pr-review
+Multi Review
 
 This product includes prompt text adapted from the following projects.
 The adaptations are in src/prompts.ts; changes are summarised there.

@@ -39,7 +39,7 @@ skipped, failed, or waiting (for Claude's usage limit to reset; queued again for
 **Job run**: what the queue hands a running review job: its abort signal, a spend meter that records
 each Claude run's cost as it finishes, and a slot to save data for the job's retries.
 
-**Trigger phrase**: the PR comment line (`@private-review`, or `@private-review full`) that requests
+**Trigger phrase**: the PR comment line (`@multi-review`, or `@multi-review full`) that requests
 a review. Only owners, members and collaborators can use it.
 
 **Trusted author**: a PR author or commenter whose `author_association` is OWNER, MEMBER or

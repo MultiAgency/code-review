@@ -79,7 +79,7 @@ const Env = z.object({
   // Diffs larger than this go to a file Claude reads instead of the prompt.
   REVIEW_INLINE_DIFF_CHARS: num(120_000, (s) => s.int().positive()),
   // A PR comment line starting with this requests a review.
-  REVIEW_TRIGGER: z.string().trim().min(1).default("@private-review"),
+  REVIEW_TRIGGER: z.string().trim().min(1).default("@multi-review"),
   REVIEW_MAX_ATTEMPTS: num(3, (s) => s.int().min(1)),
 
   PORT: num(8080, (s) => s.int().min(1).max(65535)),

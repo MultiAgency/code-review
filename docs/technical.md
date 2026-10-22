@@ -18,8 +18,8 @@ GitHub ─webhook─▶ HTTP adapter ─▶ review queue ─▶ PR workspace ─
    - **No review on push.** Pushes never trigger a review.
    - **On request:** owners, members and collaborators can ask for a review of any PR,
      including an outside contributor's, with a PR comment line starting with
-     **`@private-review`**. A re-review covers only the commits since the last review.
-     **`@private-review full`** reviews the whole PR, and so does any re-review after a
+     **`@multi-review`**. A re-review covers only the commits since the last review.
+     **`@multi-review full`** reviews the whole PR, and so does any re-review after a
      rebase or force-push.
    - **Everyone else's comments are ignored,** so outsiders can't spend the review budget.
 2. **Review queue.**
@@ -154,7 +154,7 @@ wrong.
 | `CLAUDE_CODE_OAUTH_TOKEN`                  |                          | Model access (see above)                                                                                                                              |
 | `POST_REVIEWS`                             | `false`                  | `true` posts to GitHub; otherwise reviews are only logged                                                                                             |
 | `ALLOWED_REPOS`                            | (all)                    | Comma-separated `owner/repo` allowlist                                                                                                                |
-| `REVIEW_TRIGGER`                           | `@private-review`        | PR comment phrase that requests a review                                                                                                              |
+| `REVIEW_TRIGGER`                           | `@multi-review`        | PR comment phrase that requests a review                                                                                                              |
 | `REVIEW_MODEL`                             | (Claude Code default)    | Pin a model ID, e.g. `claude-opus-5-5`                                                                                                                |
 | `REVIEW_EFFORT`                            | `high`                   | `low` … `max`                                                                                                                                         |
 | `REVIEW_VERIFY`                            | `true`                   | Run the verify pass                                                                                                                                   |
@@ -195,8 +195,8 @@ service.)
 **Any other container platform:**
 
 ```sh
-docker build -t claude-pr-review .
-docker run -p 8080:8080 -v pr-review-data:/data --env-file .env claude-pr-review
+docker build -t multi-review .
+docker run -p 8080:8080 -v pr-review-data:/data --env-file .env multi-review
 ```
 
 - **Shutdown:** give the platform a stop timeout above `SHUTDOWN_GRACE_SECONDS`.

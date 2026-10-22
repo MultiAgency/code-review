@@ -27,14 +27,14 @@ await using workspace = await openLocalWorkspace({
   head: values.head,
 });
 const result = await reviewChanges(
-  { workspace, log: (msg) => console.error(`[claude-pr-review] ${msg}`) },
+  { workspace, log: (msg) => console.error(`[multi-review] ${msg}`) },
   {
-    agent: agentRunnerFor(config, (f) => console.error(`[claude-pr-review] ${JSON.stringify(f)}`)),
+    agent: agentRunnerFor(config, (f) => console.error(`[multi-review] ${JSON.stringify(f)}`)),
     options: reviewOptions(config),
   },
 ).catch((error: unknown) => {
   if (!(error instanceof ReviewFailedError)) throw error;
-  console.error(`[claude-pr-review] ${error.message}`);
+  console.error(`[multi-review] ${error.message}`);
   process.exit(1);
 });
 const report = buildReport(result, {

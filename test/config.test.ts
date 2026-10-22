@@ -13,7 +13,7 @@ test("defaults when nothing is set", () => {
   assert.equal(c.MAX_CONCURRENT_REVIEWS, 2);
   assert.equal(c.POST_REVIEWS, false);
   assert.equal(c.REVIEW_MODEL, undefined);
-  assert.equal(c.REVIEW_TRIGGER, "@private-review");
+  assert.equal(c.REVIEW_TRIGGER, "@multi-review");
   assert.deepEqual(c.ALLOWED_REPOS, []);
 });
 

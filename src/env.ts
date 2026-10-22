@@ -43,7 +43,7 @@ export function claudeEnv(oauthToken?: string): Record<string, string> {
             key.startsWith("VERTEX_"))),
     ),
     ...(oauthToken ? { CLAUDE_CODE_OAUTH_TOKEN: oauthToken } : {}),
-    CLAUDE_AGENT_SDK_CLIENT_APP: "claude-pr-review/0.2.0",
+    CLAUDE_AGENT_SDK_CLIENT_APP: "multi-review/0.2.0",
   };
 }
 

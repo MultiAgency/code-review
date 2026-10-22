@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { jobFromWebhook, mentionsTrigger } from "../src/triggers.ts";
 
-const opts = { trigger: "@private-review", allowedRepos: [] as string[] };
+const opts = { trigger: "@multi-review", allowedRepos: [] as string[] };
 const repository = { full_name: "acme/app" };
 
 const pr = (
@@ -79,27 +79,27 @@ test("automatic reviews only for trusted, human authors", () => {
 });
 
 test("on-demand review from a trusted comment", () => {
-  const decision = comment("Thanks!\n@Private-Review please");
+  const decision = comment("Thanks!\n@Multi-Review please");
   assert.ok("job" in decision);
   assert.equal(decision.job.reason, "comment");
   assert.equal(decision.job.commentId, 99);
-  assert.ok("job" in comment("@private-review", { association: "OWNER" }));
-  const full = comment("@private-review full");
+  assert.ok("job" in comment("@multi-review", { association: "OWNER" }));
+  const full = comment("@multi-review full");
   assert.ok("job" in full && full.job.full === true);
-  const plain = comment("@private-review please");
+  const plain = comment("@multi-review please");
   assert.ok("job" in plain && plain.job.full === undefined);
 });
 
 test("ignores untrusted, bot, issue, closed and unrelated comments", () => {
   assert.ok(
-    "skip" in comment("@private-review", { association: "CONTRIBUTOR" }),
+    "skip" in comment("@multi-review", { association: "CONTRIBUTOR" }),
   );
-  assert.ok("skip" in comment("@private-review", { association: "NONE" }));
-  assert.ok("skip" in comment("@private-review", { senderType: "Bot" }));
-  assert.ok("skip" in comment("@private-review", { onIssue: true }));
-  assert.ok("skip" in comment("@private-review", { state: "closed" }));
+  assert.ok("skip" in comment("@multi-review", { association: "NONE" }));
+  assert.ok("skip" in comment("@multi-review", { senderType: "Bot" }));
+  assert.ok("skip" in comment("@multi-review", { onIssue: true }));
+  assert.ok("skip" in comment("@multi-review", { state: "closed" }));
   assert.ok("skip" in comment("looks good"));
-  assert.ok("skip" in comment("ping @private-reviewer"));
+  assert.ok("skip" in comment("ping @multi-reviewer"));
 });
 
 test("respects the repo allowlist", () => {
@@ -119,6 +119,6 @@ test("respects the repo allowlist", () => {
 });
 
 test("mentionsTrigger matches whole phrase at line start", () => {
-  assert.ok(mentionsTrigger("  @private-review  ", "@private-review"));
-  assert.ok(!mentionsTrigger("please @private-review", "@private-review"));
+  assert.ok(mentionsTrigger("  @multi-review  ", "@multi-review"));
+  assert.ok(!mentionsTrigger("please @multi-review", "@multi-review"));
 });

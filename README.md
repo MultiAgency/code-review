@@ -1,4 +1,4 @@
-# claude-pr-review
+# Multi Review
 
 An AI code reviewer for your GitHub pull requests, built on Claude. It runs on your own server,
 reads each pull request, and leaves comments about real problems it finds, such as bugs, security
@@ -25,8 +25,8 @@ It won't repeat a problem it already pointed out.
 - **Automatically, once,** when a pull request opens (or a draft is marked ready). This only
   happens for people in your organisation or with access to the repo, never for bots or
   outside contributors.
-- **Whenever you ask.** Comment `@private-review` on any pull request to get another review of
-  the new changes, or `@private-review full` to review the whole thing again. Only people with
+- **Whenever you ask.** Comment `@multi-review` on any pull request to get another review of
+  the new changes, or `@multi-review full` to review the whole thing again. Only people with
   access to the repo can ask.
 
 Pushing new commits does not trigger a review on its own. Ask with a comment when you want one.

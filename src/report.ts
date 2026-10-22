@@ -66,13 +66,13 @@ export type FailureReason =
   | "unknown";
 
 const FAILURE_TEXT: Record<FailureReason, string> = {
-  usage_limit: "Claude's usage limit was reached.",
-  auth: "Claude rejected its token (expired or revoked).",
-  overloaded: "Claude's API was overloaded.",
+  usage_limit: "The reviewer's usage limit was reached.",
+  auth: "The reviewer's model token was rejected (expired or revoked).",
+  overloaded: "The model API was overloaded.",
   too_large: "This PR is too large to review in one pass.",
   budget: "The review hit its spending or turn limit.",
   timeout: "The review took too long and was stopped.",
-  bad_output: "Claude didn't return a usable review.",
+  bad_output: "The reviewer didn't return a usable review.",
   git: "The PR's commits couldn't be fetched.",
   github: "A GitHub API call failed.",
   interrupted: "The service restarted during the review.",
@@ -215,7 +215,7 @@ export function buildReport(
       );
       const head = [
         SUMMARY_MARKER,
-        `### Claude review · \`${ctx.headSha.slice(0, 7)}\`${ctx.mode === "incremental" ? ` (changes since \`${ctx.prior!.head.slice(0, 7)}\`)` : ""}`,
+        `### Multi Review · \`${ctx.headSha.slice(0, 7)}\`${ctx.mode === "incremental" ? ` (changes since \`${ctx.prior!.head.slice(0, 7)}\`)` : ""}`,
         "",
       ];
       if (result.verification === "unverified") {
@@ -286,7 +286,7 @@ export function buildReport(
     },
     renderText(options = {}) {
       const lines = [
-        `Claude review · ${ctx.headSha.slice(0, 7)}${ctx.mode === "incremental" ? ` (changes since ${ctx.prior!.head.slice(0, 7)})` : ""}`,
+        `Multi Review · ${ctx.headSha.slice(0, 7)}${ctx.mode === "incremental" ? ` (changes since ${ctx.prior!.head.slice(0, 7)})` : ""}`,
       ];
       if (result.verification === "unverified")
         lines.push(
@@ -373,7 +373,7 @@ export function renderFailure(
   );
 }
 
-/** Summary comment for a review waiting for Claude's usage limit to reset. */
+/** Summary comment for a review waiting for the usage limit to reset. */
 export function renderWaiting(until: number, prior?: ReviewState): string {
   const at = new Date(until).toISOString().slice(11, 16);
   return statusComment(
@@ -385,7 +385,7 @@ export function renderWaiting(until: number, prior?: ReviewState): string {
 function statusComment(line: string, prior: ReviewState | undefined): string {
   return [
     SUMMARY_MARKER,
-    "### Claude review",
+    "### Multi Review",
     "",
     line,
     ...(prior

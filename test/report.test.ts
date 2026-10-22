@@ -50,7 +50,7 @@ test("high and medium findings on diff lines become inline comments, capped; the
   const report = buildReport(result(findings), {
     headSha: HEAD,
     mode: "full",
-    trigger: "@private-review",
+    trigger: "@multi-review",
     maxInline: 2,
   });
   assert.deepEqual(
@@ -68,7 +68,7 @@ test("file-level comments for findings on a changed file but not a diff line", (
   const report = buildReport(result([f({ placement: { kind: "file" } })]), {
     headSha: HEAD,
     mode: "full",
-    trigger: "@private-review",
+    trigger: "@multi-review",
     maxInline: 10,
   });
   assert.equal(report.inline.length, 0);
@@ -90,7 +90,7 @@ test("multi-line placements and one-click suggestions only for exact matches", (
         fix_code: "x",
       }),
     ]),
-    { headSha: HEAD, mode: "full", trigger: "@private-review", maxInline: 10 },
+    { headSha: HEAD, mode: "full", trigger: "@multi-review", maxInline: 10 },
   );
   const [exact, inexact] = report.inline;
   assert.equal(exact!.startLine, 2);
@@ -106,7 +106,7 @@ test("model text can't plant suggestion blocks or forge hidden markers", () => {
   const report = buildReport(result([evil]), {
     headSha: HEAD,
     mode: "full",
-    trigger: "@private-review",
+    trigger: "@multi-review",
     maxInline: 10,
   });
   const comment = report.inline[0]!.body;
@@ -121,7 +121,7 @@ test("state round-trips, and findings already commented on are never posted agai
   const first = buildReport(result([f()]), {
     headSha: OLD,
     mode: "full",
-    trigger: "@private-review",
+    trigger: "@multi-review",
     maxInline: 10,
   });
   const state = parseState(
@@ -141,7 +141,7 @@ test("state round-trips, and findings already commented on are never posted agai
   const again = buildReport(result([f({ line: 5 })]), {
     headSha: HEAD,
     mode: "full",
-    trigger: "@private-review",
+    trigger: "@multi-review",
     prior: state,
     maxInline: 10,
   });
@@ -172,7 +172,7 @@ test("a full review of a new head resolves findings it no longer reports; an inc
   const full = buildReport(result([]), {
     headSha: HEAD,
     mode: "full",
-    trigger: "@private-review",
+    trigger: "@multi-review",
     prior,
     maxInline: 10,
   });
@@ -183,7 +183,7 @@ test("a full review of a new head resolves findings it no longer reports; an inc
   const inc = buildReport(result([]), {
     headSha: HEAD,
     mode: "incremental",
-    trigger: "@private-review",
+    trigger: "@multi-review",
     prior,
     maxInline: 10,
   });
@@ -203,7 +203,7 @@ test("unverified reviews say so, and secrets in model text are redacted", () => 
       {
         headSha: HEAD,
         mode: "full",
-    trigger: "@private-review",
+    trigger: "@multi-review",
         maxInline: 0,
       },
     );
@@ -222,7 +222,7 @@ test("the summary stays under GitHub's size limit and keeps its state", () => {
   const summary = buildReport(result(many), {
     headSha: HEAD,
     mode: "full",
-    trigger: "@private-review",
+    trigger: "@multi-review",
     maxInline: 10,
   }).renderSummary(new Set());
   assert.ok(summary.length <= 60_000, String(summary.length));
@@ -235,7 +235,7 @@ test("failure summaries name a reason, invite a retry, and keep earlier state", 
   const body = renderFailure("usage_limit", { trigger: "@review-bot", prior });
   assert.match(body, /usage limit/);
   assert.match(body, /Comment `@review-bot` to retry/);
-  assert.doesNotMatch(body, /@private-review/);
+  assert.doesNotMatch(body, /@multi-review/);
   assert.deepEqual(parseState(body), prior);
 });
 
@@ -254,7 +254,7 @@ test("comments and summary use the repo's pass and severity names, and say what 
       ],
       { checked: ["finishAutoJob and settleAutoJobs", "settleSourceClaim"] },
     ),
-    { headSha: HEAD, mode: "full", trigger: "@private-review", maxInline: 10 },
+    { headSha: HEAD, mode: "full", trigger: "@multi-review", maxInline: 10 },
   );
   assert.match(report.inline[0]!.body, /^\*\*🔴 Bugs · Important: Loop\*\*/);
   const summary = report.renderSummary(new Set([report.inline[0]!.fp]));
@@ -274,7 +274,7 @@ test("the summary invites a re-review with the configured trigger phrase", () =>
   }).renderSummary(new Set());
   assert.match(summary, /`@review-bot` to re-review/);
   assert.match(summary, /`@review-bot full`/);
-  assert.doesNotMatch(summary, /@private-review/);
+  assert.doesNotMatch(summary, /@multi-review/);
 });
 
 test("plain text lists every finding without markers, state or markdown", () => {
@@ -305,7 +305,7 @@ test("plain text lists every finding without markers, state or markdown", () => 
     { headSha: HEAD, mode: "incremental", trigger: "@review-bot", prior, maxInline: 10 },
   ).renderText();
   assert.doesNotMatch(text, /<!--|<sub>|\*\*|`|\u001b/);
-  assert.match(text, /^Claude review · aaaaaaa \(changes since bbbbbbb\)/);
+  assert.match(text, /^Multi Review · aaaaaaa \(changes since bbbbbbb\)/);
   assert.match(text, /not double-checked/);
   assert.match(text, /🔴 High · correctness  src\/a\.ts:2  Division by zero\n    b is Infinity\.\n    Suggested fix: Guard b\./);
   assert.match(text, /🟡 Low · correctness  src\/a\.ts:2  Style\n    Line one\.\n    Line two \[31mred/);
@@ -317,7 +317,7 @@ test("plain text says how much was checked, and lists it only when asked", () =>
   const report = buildReport(result([f()], { checked: ["callers of average()", "empty arrays"] }), {
     headSha: HEAD,
     mode: "full",
-    trigger: "@private-review",
+    trigger: "@multi-review",
     maxInline: 0,
   });
   assert.match(report.renderText(), /\nChecked 2 areas\.$/);

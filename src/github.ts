@@ -52,7 +52,7 @@ export function githubClient(opts: GitHubClientOptions): GitHubClient {
             Accept: "application/vnd.github+json",
             Authorization: `${opts.authScheme ?? "token"} ${await opts.token()}`,
             "X-GitHub-Api-Version": "2022-11-28",
-            "User-Agent": "claude-pr-review",
+            "User-Agent": "multi-review",
             ...(body === undefined
               ? {}
               : { "Content-Type": "application/json" }),

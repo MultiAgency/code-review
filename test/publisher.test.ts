@@ -33,7 +33,7 @@ const report = (findings: Finding[], prior?: ReturnType<typeof parseState>) =>
   buildReport(result(findings), {
     headSha: HEAD,
     mode: "full",
-    trigger: "@private-review",
+    trigger: "@multi-review",
     ...(prior ? { prior } : {}),
     maxInline: 10,
   });
@@ -46,7 +46,7 @@ test("first review: summary comment, one inline review pinned to the reviewed he
     prNumber: 1,
     triggerCommentId: 7,
     isOwnComment: own,
-    trigger: "@private-review",
+    trigger: "@multi-review",
   });
   await p.started();
   await p.publish(
@@ -76,7 +76,7 @@ test("re-review edits the same summary and doesn't repost earlier findings", asy
     repo: "o/r",
     prNumber: 1,
     isOwnComment: own,
-    trigger: "@private-review",
+    trigger: "@multi-review",
   });
   await p1.publish(report([finding()]));
   const p2 = githubPublisher({
@@ -84,7 +84,7 @@ test("re-review edits the same summary and doesn't repost earlier findings", asy
     repo: "o/r",
     prNumber: 1,
     isOwnComment: own,
-    trigger: "@private-review",
+    trigger: "@multi-review",
   });
   const prior = await p2.prior();
   assert.equal(prior?.head, HEAD);
@@ -109,7 +109,7 @@ test("a summary-looking comment from someone else is ignored", async () => {
     repo: "o/r",
     prNumber: 1,
     isOwnComment: own,
-    trigger: "@private-review",
+    trigger: "@multi-review",
   });
   assert.equal(await p.prior(), undefined);
   await p.publish(report([]));
@@ -124,7 +124,7 @@ test("rejected inline comments fold into the summary", async () => {
     repo: "o/r",
     prNumber: 1,
     isOwnComment: own,
-    trigger: "@private-review",
+    trigger: "@multi-review",
   });
   await p.publish(report([finding({ title: "Folded bug" })]));
   assert.equal(state.reviews.length, 0);
@@ -146,7 +146,7 @@ test("if the PR was force-pushed past the reviewed commit, findings go in the su
     repo: "o/r",
     prNumber: 1,
     isOwnComment: own,
-    trigger: "@private-review",
+    trigger: "@multi-review",
   });
   await p.publish(report([finding({ title: "Stale bug" })]));
   assert.equal(state.reviews.length, 0);
@@ -160,7 +160,7 @@ test("failures update the summary with a reason and react confused, keeping earl
     repo: "o/r",
     prNumber: 1,
     isOwnComment: own,
-    trigger: "@private-review",
+    trigger: "@multi-review",
   });
   await p.publish(report([finding()]));
   const prior = await githubPublisher({
@@ -168,7 +168,7 @@ test("failures update the summary with a reason and react confused, keeping earl
     repo: "o/r",
     prNumber: 1,
     isOwnComment: own,
-    trigger: "@private-review",
+    trigger: "@multi-review",
   }).prior();
   await p.failed("timeout", prior);
   assert.match(state.comments[0]!.body!, /took too long/);

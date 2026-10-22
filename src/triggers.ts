@@ -5,7 +5,7 @@ export interface ReviewJob {
   reason: "opened" | "ready_for_review" | "comment";
   /** The triggering comment, for comment-requested reviews. */
   commentId?: number;
-  /** `@private-review full`: review the whole PR, not just new commits. */
+  /** `@multi-review full`: review the whole PR, not just new commits. */
   full?: boolean;
   requestedBy?: string;
 }

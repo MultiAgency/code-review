@@ -57,9 +57,9 @@ function deps(
       repo: "o/r",
       prNumber: 1,
       isOwnComment: (c) => c.performed_via_github_app?.id === 42,
-      trigger: "@private-review",
+      trigger: "@multi-review",
     }),
-    trigger: "@private-review",
+    trigger: "@multi-review",
     log: () => {},
     timeoutMs: 60_000,
   };
@@ -149,7 +149,7 @@ async function reviewedThenPushed(
   return gh;
 }
 
-test("`@private-review full` reviews the whole PR and resolves fixed findings", async () => {
+test("`@multi-review full` reviews the whole PR and resolves fixed findings", async () => {
   const gh = await reviewedThenPushed();
   const second = scriptedAgent(() => ok({ summary: "s", findings: [] }));
   await runReviewJob(

@@ -14,7 +14,7 @@ before(async () => {
   server = createServer(
     webhookHandler({
       secret: "s3cret",
-      trigger: "@private-review",
+      trigger: "@multi-review",
       allowedRepos: [],
       queue: {
         submit: (job, delivery) => (

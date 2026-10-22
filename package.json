@@ -1,8 +1,8 @@
 {
-  "name": "claude-pr-review",
+  "name": "multi-review",
   "version": "0.1.0",
   "private": true,
-  "description": "Self-hosted GitHub PR reviewer built on the Claude Agent SDK",
+  "description": "Multi Review: a self-hosted GitHub PR reviewer",
   "type": "module",
   "engines": {
     "node": ">=22"
