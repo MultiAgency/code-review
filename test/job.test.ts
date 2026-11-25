@@ -120,6 +120,35 @@ test("a re-review comment after new commits reviews only those commits and passe
   assert.match(gh.state.comments[0]!.body!, /Still open from earlier reviews/);
 });
 
+test("a re-review of new commits that fix an earlier finding marks it resolved in the summary", async () => {
+  const p = pr();
+  const gh = fakeGitHub({ head: p.head, base: p.base, cloneUrl: p.cloneUrl });
+  await runReviewJob(
+    job(),
+    deps(gh, scriptedAgent(() => ok({ summary: "s", findings: [bug] })).runner),
+    run(),
+  );
+
+  gh.state.head = p.push({ "src/a.ts": "a\n" });
+  const second = scriptedAgent(() =>
+    ok({
+      summary: "s",
+      findings: [],
+      resolved: [{ index: 0, reason: "bug() was removed" }],
+    }),
+  );
+  await runReviewJob(
+    job({ reason: "comment", commentId: 5 }),
+    deps(gh, second.runner),
+    run(),
+  );
+  const body = gh.state.comments[0]!.body!;
+  assert.match(body, /changes since/);
+  assert.match(body, /Resolved since the last review[\s\S]*bug\(\) throws/);
+  assert.doesNotMatch(body, /Still open from earlier reviews/);
+  assert.equal(parseState(body)!.findings[0]!.status, "resolved");
+});
+
 /** Reviews a PR once, then pushes a commit; returns what a second review needs. */
 async function reviewedThenPushed(
   compare?: (first: string, next: string) => Record<string, string>,

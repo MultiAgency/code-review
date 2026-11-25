@@ -88,6 +88,19 @@ function reviewOutput(severities: [string, ...string[]]) {
           ),
       }),
     ),
+    resolved: z
+      .array(
+        z.object({
+          index: z.number().int().describe("The earlier finding's index."),
+          reason: z
+            .string()
+            .describe("The current code that shows the issue is gone, quoted."),
+        }),
+      )
+      .optional()
+      .describe(
+        "Earlier findings (by index) that the code at this commit no longer has. Only ones whose current code you read; leave out any you are unsure about.",
+      ),
   });
 }
 
@@ -143,6 +156,11 @@ export interface ReviewResult {
   skipped: number;
   /** What the review passes say they traced. */
   checked: string[];
+  /**
+   * Fingerprints of earlier findings a review pass says are fixed, in files this
+   * review's diff changed. Absent on results saved before this was recorded.
+   */
+  resolved?: string[];
   verification: Verification;
   costUsd: number;
 }
@@ -198,7 +216,7 @@ export async function reviewChanges(
     const summary = diff.skipped.length
       ? `Only files that aren't reviewed changed (${diff.skipped.length}: lockfiles, build output or vendored code).`
       : "No changes to review.";
-    return { summary, findings: [], dropped: 0, skipped: diff.skipped.length, checked: [], verification: "skipped", costUsd: 0 };
+    return { summary, findings: [], dropped: 0, skipped: diff.skipped.length, checked: [], resolved: [], verification: "skipped", costUsd: 0 };
   }
 
   const diffPath = join(ws.workDir, "pr.diff");
@@ -281,12 +299,27 @@ export async function reviewChanges(
       : undefined;
     placed.push({ ...f, placement: place(f, text, diff.commentable.get(f.file), changed.has(f.file)) });
   }
+  // An earlier finding counts as fixed only when a pass says so, this diff
+  // touched its file, and no pass reported it again.
+  const reported = new Set(placed.map((f) => fingerprint(f.file, f.title)));
+  const resolved = new Set<string>();
+  for (const run of runs) {
+    if (!run.ok) continue;
+    for (const { index } of run.data.resolved ?? []) {
+      const prior = input.priorFindings?.[index];
+      if (!prior || !changed.has(prior.file)) continue;
+      const fp = fingerprint(prior.file, prior.title);
+      if (!reported.has(fp)) resolved.add(fp);
+    }
+  }
+  if (resolved.size) log(`review: ${resolved.size} earlier finding(s) fixed`);
   return {
     summary: merged.summaries.join("\n\n"),
     findings: placed.sort((a, b) => RANK[a.severity] - RANK[b.severity]),
     dropped,
     skipped: diff.skipped.length,
     checked: merged.checked,
+    resolved: [...resolved],
     verification,
     costUsd,
   };

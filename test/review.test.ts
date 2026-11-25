@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import {
+  fingerprint,
   ReviewFailedError,
   reviewChanges,
   type ReviewOptions,
@@ -264,6 +265,28 @@ test("earlier findings are passed to the review pass", async () => {
     requests[0]!.prompt,
     /Findings from earlier reviews[\s\S]*"title": "Old bug"/,
   );
+});
+
+test("an earlier finding is fixed only when a pass says so, the diff touched its file and it wasn't reported again", async () => {
+  const r = prRepo();
+  const priorFindings = [
+    { file: "src/a.ts", line: 2, title: "Old bug", body: "" },
+    { file: "src/other.ts", line: 1, title: "Elsewhere", body: "" },
+    { file: "src/a.ts", line: 2, title: "Division by zero", body: "" },
+  ];
+  const { runner, requests } = scriptedAgent(() =>
+    ok({
+      summary: "s",
+      findings: [finding()],
+      resolved: [0, 1, 2, 9].map((index) => ({ index, reason: "gone" })),
+    }),
+  );
+  const result = await reviewChanges(
+    { ...(await input(r)), priorFindings },
+    { agent: runner, options: { ...options, verify: false } },
+  );
+  assert.match(requests[0]!.prompt, /"index": 1,\s+"file": "src\/other\.ts"/);
+  assert.deepEqual(result.resolved, [fingerprint("src/a.ts", "Old bug")]);
 });
 
 test("findings are ordered by severity", async () => {
