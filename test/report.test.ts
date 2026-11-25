@@ -193,6 +193,47 @@ test("a full review of a new head resolves findings it no longer reports; an inc
   assert.equal(parseState(incSummary)!.findings[0]!.status, "open");
 });
 
+test("an incremental review resolves the earlier findings it found fixed and keeps the rest open", () => {
+  const stored = (title: string) => ({
+    fp: fingerprint("src/a.ts", title),
+    file: "src/a.ts",
+    line: 1,
+    severity: "high" as const,
+    title,
+    body: "",
+    status: "open" as const,
+    commented: true,
+  });
+  const prior: ReviewState = {
+    v: 1,
+    head: OLD,
+    findings: [stored("Fixed bug"), stored("Untouched bug")],
+  };
+  const ctx = { headSha: HEAD, trigger: "@multi-review", prior, maxInline: 10 };
+  const resolved = [fingerprint("src/a.ts", "Fixed bug")];
+  const summary = buildReport(result([], { resolved }), {
+    ...ctx,
+    mode: "incremental",
+  }).renderSummary(new Set());
+  assert.match(summary, /1 still open from earlier · 1 resolved/);
+  assert.match(summary, /Still open from earlier reviews\n\n- .*Untouched bug/);
+  assert.match(summary, /Resolved since the last review\n\n- ✅ ~~Fixed bug~~/);
+  assert.deepEqual(
+    parseState(summary)!.findings.map((f) => [f.title, f.status]),
+    [
+      ["Untouched bug", "open"],
+      ["Fixed bug", "resolved"],
+    ],
+  );
+
+  // Reported again in the same review: it is still a finding, not a fix.
+  const again = buildReport(
+    result([f({ title: "Fixed bug" })], { resolved }),
+    { ...ctx, mode: "incremental" },
+  ).renderSummary(new Set());
+  assert.doesNotMatch(again, /Resolved since the last review/);
+});
+
 test("unverified reviews say so, and secrets in model text are redacted", () => {
   process.env.TEST_REPORT_SECRET_TOKEN = "s3cr3t-value-123456";
   try {

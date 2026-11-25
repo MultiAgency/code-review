@@ -175,17 +175,20 @@ export function buildReport(
     }
   }
 
-  // An incremental review only saw new commits, so it can't tell whether older
-  // findings were fixed. Only a full review of a new head resolves them.
-  const canResolve =
+  // A full review of a new head saw everything, so what it no longer reports is
+  // resolved. An incremental one only saw the new commits: it resolves the
+  // earlier findings the review found fixed, and the rest stay open.
+  const sawEverything =
     ctx.mode === "full" &&
     ctx.prior !== undefined &&
     ctx.prior.head !== ctx.headSha;
+  const fixed = new Set(ctx.mode === "incremental" ? result.resolved : []);
   const earlierOpen = (ctx.prior?.findings ?? []).filter(
     (f) => f.status === "open" && !currentFps.has(f.fp),
   );
-  const resolved = canResolve ? earlierOpen : [];
-  const stillOpen = canResolve ? [] : earlierOpen;
+  const isResolved = (f: StoredFinding) => sawEverything || fixed.has(f.fp);
+  const resolved = earlierOpen.filter(isResolved);
+  const stillOpen = earlierOpen.filter((f) => !isResolved(f));
 
   return {
     headSha: ctx.headSha,
