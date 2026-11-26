@@ -174,6 +174,12 @@ wrong.
 | `QUEUE_DB`                                 | `/data/jobs.db`          | Put it on a persistent volume                                                                                                                         |
 | `SHUTDOWN_GRACE_SECONDS`                   | `25`                     | Time running reviews get to finish on SIGTERM                                                                                                         |
 | `PORT`                                     | `8080`                   |                                                                                                                                                       |
+| `PURCHASE_TOKEN`                           |                          | Bearer token the payment gateway presents. Set with the next two to turn purchased reviews on                                                         |
+| `PURCHASE_GATEWAY`                         |                          | The gateway's base URL. Outcomes are only delivered under it                                                                                          |
+| `PURCHASE_ANTHROPIC_API_KEY`               |                          | API key purchased reviews are billed to. They never use a subscription token                                                                          |
+| `PURCHASE_ANTHROPIC_BASE_URL`              | (Anthropic)              | Set when that key belongs to a gateway serving the Anthropic Messages API, e.g. `https://cloud-api.near.ai` for NEAR AI Cloud                         |
+| `PURCHASE_BUDGET_USD`                      | `1.5`                    | Per purchased review, across all passes. Keep it below the price charged                                                                              |
+| `PURCHASE_MAX_CHANGED_LINES`               | `4000`                   | Larger pull requests are refused before the buyer is charged                                                                                          |
 
 ### 4. Deploy
 
@@ -212,6 +218,31 @@ docker run -p 8080:8080 -v pr-review-data:/data --env-file .env multi-review
 1. Open a test PR as a trusted author.
 2. Check the logged review (`would post`).
 3. Set `POST_REVIEWS=true`.
+
+## Purchased reviews
+
+A payment gateway can sell reviews of public pull requests. Once a buyer has paid, the gateway
+sends `POST /jobs` with its bearer token:
+
+```json
+{
+  "id": "3f2b6c1e-8a4d-4e0b-9c57-1d2a7f6b9e10",
+  "input": { "repo": "owner/name", "pr": 12 },
+  "callback": { "url": "https://<gateway>/jobs/<id>/outcome", "token": "..." }
+}
+```
+
+- **Admission:** the pull request must be open, in a public repository, and within
+  `PURCHASE_MAX_CHANGED_LINES`. Otherwise the answer is `422` with `{ "error", "message" }`, which
+  the gateway passes on without charging. `202` means the review is queued.
+- **The review:** the same review a pull request gets, always in full, billed to
+  `PURCHASE_ANTHROPIC_API_KEY` and capped at `PURCHASE_BUDGET_USD`. It reads the repository with
+  `GITHUB_TOKEN`, which needs no more than public read access. `ALLOWED_REPOS` does not apply.
+- **The outcome** is posted to the callback with the callback's token, and nothing is written to
+  GitHub: `{ "status": "done", "result": … }` with the reviewed commit, the summary and every
+  finding as data, or `{ "status": "failed", "reason", "message" }` once no attempt is left.
+- **Isolation:** a purchased review is its buyer's own job. It never replaces, and is never
+  replaced by, another review of the same pull request.
 
 ## Local / CI usage
 

@@ -2,7 +2,9 @@
 import { createServer } from "node:http";
 import { dirname } from "node:path";
 import { mkdirSync } from "node:fs";
-import { checkServiceConfig, loadConfigOrExit } from "./config.js";
+import { checkServiceConfig, loadConfigOrExit, purchaseSettings } from "./config.js";
+import { githubClient } from "./github.js";
+import { purchaseAdmission } from "./purchase.js";
 import { openReviewQueue } from "./queue.js";
 import { reviewWork } from "./review-work.js";
 import { webhookHandler } from "./server.js";
@@ -25,12 +27,25 @@ const queue = openReviewQueue(reviewWork(config, { log }), {
   log,
 });
 
+const purchases = purchaseSettings(config);
 const server = createServer(
   webhookHandler({
     secret: config.GITHUB_WEBHOOK_SECRET!,
     trigger: config.REVIEW_TRIGGER,
     allowedRepos: config.ALLOWED_REPOS,
     queue,
+    ...(purchases
+      ? {
+          purchases: {
+            token: purchases.token,
+            gateway: purchases.gateway,
+            admit: purchaseAdmission(
+              githubClient({ apiUrl: config.GITHUB_API_URL, token: async () => config.GITHUB_TOKEN! }),
+              purchases.maxChangedLines,
+            ),
+          },
+        }
+      : {}),
     log,
   }),
 );
@@ -41,6 +56,7 @@ server.listen(config.PORT, () => {
     port: config.PORT,
     model: config.REVIEW_MODEL ?? "(Claude Code default)",
     postReviews: config.POST_REVIEWS,
+    purchases: purchases !== undefined,
     maxConcurrent: config.MAX_CONCURRENT_REVIEWS,
     queueDb: config.QUEUE_DB,
     ...queue.stats(),

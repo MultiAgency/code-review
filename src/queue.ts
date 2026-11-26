@@ -14,6 +14,8 @@ export interface JobRun {
   saved: unknown;
   /** Keeps JSON data with the job for its retries, e.g. a finished review whose publishing failed. */
   save(data: unknown): void;
+  /** True when a transient failure of this run will not be retried. */
+  finalAttempt: boolean;
 }
 
 export type Work = (job: ReviewJob, run: JobRun) => Promise<JobOutcome>;
@@ -189,7 +191,8 @@ export class ReviewQueue {
 
   /** Persists a job. A redelivered webhook (same delivery id) is ignored. */
   submit(job: ReviewJob, deliveryId: string): "queued" | "duplicate" {
-    const pr = `${job.repo}#${job.prNumber}`;
+    // A purchased review is its buyer's own: it neither replaces nor is replaced by another review of the PR.
+    const pr = job.purchase ? `purchase ${job.purchase.id}` : `${job.repo}#${job.prNumber}`;
     const id = this.store.insert(pr, deliveryId, job);
     if (id === undefined) return "duplicate";
     // Newest request wins: drop older waiting jobs for this PR and stop a running one.
@@ -262,6 +265,7 @@ export class ReviewQueue {
       queuedAt: Number(row.created),
       saved: row.saved === null ? undefined : JSON.parse(row.saved),
       save: (data) => this.store.save(id, data),
+      finalAttempt: attempt >= this.options.maxAttempts,
     };
     const done = (async () => {
       let next: Status = "done";

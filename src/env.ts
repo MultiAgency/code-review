@@ -25,10 +25,12 @@ function pick(names: (key: string) => boolean): Record<string, string> {
  * only when that cloud is the model provider. GitHub credentials and the
  * webhook secret are never passed, so a prompt-injected PR can't read them.
  */
-export function claudeEnv(oauthToken?: string): Record<string, string> {
+export function claudeEnv(
+  credential: { oauthToken?: string; apiKey?: string; baseUrl?: string } = {},
+): Record<string, string> {
   const bedrock = process.env.CLAUDE_CODE_USE_BEDROCK === "1";
   const vertex = process.env.CLAUDE_CODE_USE_VERTEX === "1";
-  return {
+  const env: Record<string, string> = {
     ...pick(
       (key) =>
         BASE.includes(key) ||
@@ -42,9 +44,17 @@ export function claudeEnv(oauthToken?: string): Record<string, string> {
             key.startsWith("GOOGLE_") ||
             key.startsWith("VERTEX_"))),
     ),
-    ...(oauthToken ? { CLAUDE_CODE_OAUTH_TOKEN: oauthToken } : {}),
+    ...(credential.oauthToken ? { CLAUDE_CODE_OAUTH_TOKEN: credential.oauthToken } : {}),
     CLAUDE_AGENT_SDK_CLIENT_APP: "multi-review/0.2.0",
   };
+  if (credential.apiKey) {
+    // The key replaces any subscription token, so the process bills the key and never a seat.
+    env.ANTHROPIC_API_KEY = credential.apiKey;
+    delete env.CLAUDE_CODE_OAUTH_TOKEN;
+    // The key may belong to a gateway that serves the Messages API, not to Anthropic itself.
+    if (credential.baseUrl) env.ANTHROPIC_BASE_URL = credential.baseUrl;
+  }
+  return env;
 }
 
 /** git: no model or GitHub credentials (fetch auth is passed per call, via GIT_CONFIG_*). */

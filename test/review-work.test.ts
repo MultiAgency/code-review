@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { loadConfig } from "../src/config.ts";
+import type { PurchaseOutcome } from "../src/purchase.ts";
 import { parseState, SUMMARY_MARKER } from "../src/report.ts";
 import { reviewWork } from "../src/review-work.ts";
 import type { ReviewJob } from "../src/triggers.ts";
@@ -26,12 +27,13 @@ const bug = {
   existing_code: "bug()",
 };
 const job: ReviewJob = { repo: "o/r", prNumber: 1, reason: "opened", installationId: 7 };
-const run = () => ({
+const run = (finalAttempt = false) => ({
   signal: new AbortController().signal,
   recordSpend: () => {},
   queuedAt: Date.now(),
   saved: undefined,
   save: () => {},
+  finalAttempt,
 });
 const agent = () =>
   scriptedAgent(
@@ -103,4 +105,66 @@ test("with a PAT, the token user's own summary comment is trusted and edited in 
   await work(job, run());
   assert.equal(gh.state.comments.length, 1);
   assert.equal(parseState(gh.state.comments[0]!.body!)!.head, p.head);
+});
+
+const purchased: ReviewJob = {
+  repo: "o/r",
+  prNumber: 1,
+  reason: "purchase",
+  purchase: { id: "p1", callback: { url: "https://gateway.test/jobs/p1/outcome", token: "cb" } },
+};
+
+/** Purchase work whose outcomes are collected instead of posted to the callback. */
+function purchaseWork(gh: ReturnType<typeof fakeGitHub>, runner = agent()) {
+  const delivered: PurchaseOutcome[] = [];
+  const callbacks: string[] = [];
+  const work = reviewWork(loadConfig({ POST_REVIEWS: "true", GITHUB_TOKEN: "ghp_x" }), {
+    log: () => {},
+    agent: runner,
+    github: () => ({ gh: gh.gh, gitEnv: async () => ({}) }),
+    deliver: (callback) => (callbacks.push(callback.url), async (outcome) => void delivered.push(outcome)),
+  });
+  return { work, delivered, callbacks };
+}
+
+test("a purchased review is delivered to its callback as data and never posted on the PR", async () => {
+  const p = pr();
+  const gh = fakeGitHub({ head: p.head, base: p.base, cloneUrl: p.cloneUrl, user: "reviewer-bot" });
+  const { work, delivered, callbacks } = purchaseWork(gh);
+  const outcome = await work(purchased, run());
+  assert.equal(outcome.kind, "done");
+  assert.deepEqual(callbacks, ["https://gateway.test/jobs/p1/outcome"]);
+  assert.deepEqual([gh.state.comments, gh.state.reviews, gh.state.reactions], [[], [], []]);
+  assert.equal(delivered.length, 1);
+  const done = delivered[0]!;
+  assert.equal(done.status, "done");
+  if (done.status !== "done") return;
+  assert.equal(done.result.head, p.head);
+  assert.deepEqual(
+    done.result.findings.map((f) => [f.file, f.line, f.severity, f.title]),
+    [["src/a.ts", 2, "high", "bug() throws"]],
+  );
+});
+
+test("a purchase whose pull request has closed is delivered as failed", async () => {
+  const p = pr();
+  const gh = fakeGitHub({ head: p.head, base: p.base, cloneUrl: p.cloneUrl, prState: "closed" });
+  const { work, delivered } = purchaseWork(gh);
+  assert.equal((await work(purchased, run())).kind, "skipped");
+  assert.deepEqual(delivered.map((o) => [o.status, o.status === "failed" && o.reason]), [["failed", "not_open"]]);
+});
+
+test("a purchase's failure is delivered only when no attempt is left", async () => {
+  const overloaded = () =>
+    scriptedAgent(() => ({ ok: false, failure: "overloaded", detail: "529", costUsd: 0 })).runner;
+  const p = pr();
+  const gh = fakeGitHub({ head: p.head, base: p.base, cloneUrl: p.cloneUrl });
+
+  const retried = purchaseWork(gh, overloaded());
+  assert.equal((await retried.work(purchased, run())).kind, "failed");
+  assert.deepEqual(retried.delivered, []);
+
+  const last = purchaseWork(gh, overloaded());
+  assert.equal((await last.work(purchased, run(true))).kind, "failed");
+  assert.deepEqual(last.delivered.map((o) => [o.status, o.status === "failed" && o.reason]), [["failed", "overloaded"]]);
 });

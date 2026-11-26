@@ -24,7 +24,7 @@ const work = reviewWork(config, {
 const started = Date.now();
 const outcome = await work(
   { repo: values.repo, prNumber: Number(values.pr), reason: "comment", full: true },
-  { signal: new AbortController().signal, recordSpend: () => {}, queuedAt: Date.now(), saved: undefined, save: () => {} },
+  { signal: new AbortController().signal, recordSpend: () => {}, queuedAt: Date.now(), saved: undefined, save: () => {}, finalAttempt: true },
 );
 console.log(
   JSON.stringify({

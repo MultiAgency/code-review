@@ -305,6 +305,7 @@ test("unverified reviews say so, and secrets in model text are redacted", () => 
     const summary = report.renderSummary(new Set());
     assert.match(summary, /not double-checked/);
     assert.doesNotMatch(summary, /s3cr3t-value/);
+    assert.doesNotMatch(JSON.stringify(report.renderData()), /s3cr3t-value/);
   } finally {
     delete process.env.TEST_REPORT_SECRET_TOKEN;
   }
@@ -418,4 +419,30 @@ test("plain text says how much was checked, and lists it only when asked", () =>
   assert.match(report.renderText(), /\nChecked 2 areas\.$/);
   assert.doesNotMatch(report.renderText(), /callers of average/);
   assert.match(report.renderText({ verbose: true }), /\nChecked:\n  - callers of average\(\)\n  - empty arrays$/);
+});
+
+test("the review as data carries each finding and the reviewed commit, and not what it cost", () => {
+  const data = buildReport(
+    result([f({ suggestion: "Guard the divisor." })], { checked: ["average()"], skipped: 2 }),
+    { headSha: HEAD, mode: "full", trigger: "@multi-review", maxInline: 0 },
+  ).renderData();
+  assert.deepEqual(data, {
+    head: HEAD,
+    summary: "Overview.",
+    verification: "verified",
+    findings: [
+      {
+        file: "src/a.ts",
+        line: 2,
+        severity: "high",
+        category: "correctness",
+        title: "Division by zero",
+        body: "b is Infinity.",
+        existing_code: "const b = a / 0;",
+        suggestion: "Guard the divisor.",
+      },
+    ],
+    checked: ["average()"],
+    skipped: 2,
+  });
 });

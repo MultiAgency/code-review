@@ -1,5 +1,6 @@
 // Runs the reviewer service (the repo's Docker image) as a Cloudflare Container, one instance.
-// The Worker only forwards GitHub's webhook and the health check to it; the service does the rest.
+// The Worker only forwards GitHub's webhook, the gateway's purchases and the health check to it; the
+// service does the rest.
 //
 // A container stops once its Durable Object has been inactive for the inactivity timeout, and its
 // disk is ephemeral. Reviews keep running after the webhook is answered, so an alarm checks the
@@ -26,7 +27,7 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const { pathname } = new URL(request.url);
     const allowed =
-      (request.method === "POST" && pathname === "/webhook") ||
+      (request.method === "POST" && (pathname === "/webhook" || pathname === "/jobs")) ||
       (request.method === "GET" && pathname === "/healthz");
     if (!allowed) return new Response("Not found", { status: 404 });
     try {

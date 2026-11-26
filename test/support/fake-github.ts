@@ -46,8 +46,10 @@ export function fakeGitHub(opts: {
           base: {
             ref: "main",
             sha: opts.base ?? "base",
-            repo: { clone_url: opts.cloneUrl ?? "file:///unused" },
+            repo: { clone_url: opts.cloneUrl ?? "file:///unused", private: false },
           },
+          additions: 1,
+          deletions: 0,
         } as T;
       }
       if (route === "GET /user" && opts.user) return { login: opts.user } as T;

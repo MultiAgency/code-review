@@ -1,5 +1,5 @@
 import { realpathSync } from "node:fs";
-import { isAbsolute, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import {
   query as sdkQuery,
   type EffortLevel,
@@ -57,6 +57,10 @@ export interface AgentRunner {
 export interface SdkAgentOptions {
   /** Claude subscription token for this runner; unset uses the environment's own login or key. */
   oauthToken?: string;
+  /** Anthropic API key for this runner, billed instead of any subscription token. */
+  apiKey?: string;
+  /** Where `apiKey` is accepted, when that is a gateway serving the Messages API. */
+  baseUrl?: string;
   /** Unset = Claude Code's default model for the account. */
   model?: string;
   effort: EffortLevel;
@@ -91,7 +95,7 @@ export function sdkAgentRunner(options: SdkAgentOptions): AgentRunner {
       if (result.ok || result.failure !== "crashed" || !stderr.trim())
         return result;
       const tail = redactSecrets(stderr)
-        .split(options.oauthToken || "\0")
+        .split(options.oauthToken || options.apiKey || "\0")
         .join("[redacted]");
       return { ...result, detail: `${result.detail}\nstderr: ${tail.trim()}` };
     },
@@ -152,7 +156,7 @@ export function sdkAgentRunner(options: SdkAgentOptions): AgentRunner {
           // (Checked live for streamed prompts too.)
           verbatimPrompts: true,
           persistSession: false,
-          env: claudeEnv(options.oauthToken),
+          env: claudeEnv(options),
           systemPrompt: {
             type: "preset",
             preset: "claude_code",
@@ -339,18 +343,26 @@ function errorText(error: unknown): string {
 }
 
 /**
+ * A path with every symlink resolved, also for a file that doesn't exist yet: the nearest folder that exists is
+ * resolved and the rest appended. What doesn't exist can't be a symlink, so nothing is left unresolved.
+ */
+function realOrMissing(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    const parent = dirname(path);
+    return parent === path ? path : join(realOrMissing(parent), basename(path));
+  }
+}
+
+/**
  * Denies any tool call that reaches outside the given directories, resolving
  * symlinks so a link committed in the PR (e.g. to /proc/self/environ) can't escape.
  */
 export function confineToRoots(roots: string[]): HookCallback {
   const realRoots = roots.map((r) => realpathSync(r));
   const inside = (path: string) => {
-    let real: string;
-    try {
-      real = realpathSync(path);
-    } catch {
-      real = resolve(path);
-    }
+    const real = realOrMissing(resolve(path));
     return realRoots.some((root) => {
       const rel = relative(root, real);
       return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));

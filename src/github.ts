@@ -183,7 +183,9 @@ export interface PullRequest {
   title: string;
   body: string | null;
   head: { sha: string };
-  base: { ref: string; sha: string; repo: { clone_url: string } };
+  base: { ref: string; sha: string; repo: { clone_url: string; private: boolean } };
+  additions: number;
+  deletions: number;
 }
 
 export function getPullRequest(

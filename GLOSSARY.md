@@ -30,7 +30,11 @@ redacted and size-limited. Pure; knows nothing about GitHub transport.
 hidden markers for the reviewed head and the fingerprints of posted findings.
 
 **Publisher**: delivers a review report somewhere: GitHub (summary comment, inline comments,
-reactions) or a log (dry run).
+reactions), a log (dry run), or a purchase's callback.
+
+**Purchased review**: a review of a public PR that a payment gateway has sold. It is admitted only
+if the PR is public, open and small enough, runs on its own API key and budget, and its outcome goes
+to the gateway's callback as data instead of onto the PR. _Avoid_: paid review, order.
 
 **Review job**: one queued request to review a PR, from an automatic trigger or a trigger phrase.
 Persisted until it finishes, with a finished review saved so a retry only re-posts it. It ends done,
