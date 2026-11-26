@@ -68,8 +68,19 @@ test("a token list never reaches Claude, and each token in it is redacted", asyn
   const { redactSecrets } = await import("../src/env.ts");
   withEnv({ CLAUDE_CODE_OAUTH_TOKENS: "sk-ant-oat-first-123456,sk-ant-oat-second-654321" }, () => {
     assert.equal(claudeEnv().CLAUDE_CODE_OAUTH_TOKENS, undefined);
-    assert.equal(claudeEnv("sk-ant-oat-second-654321").CLAUDE_CODE_OAUTH_TOKEN, "sk-ant-oat-second-654321");
+    assert.equal(claudeEnv({ oauthToken: "sk-ant-oat-second-654321" }).CLAUDE_CODE_OAUTH_TOKEN, "sk-ant-oat-second-654321");
     const out = redactSecrets("leaked sk-ant-oat-second-654321 and sk-ant-oat-first-123456");
     assert.doesNotMatch(out, /sk-ant-oat/);
+  });
+});
+
+test("an API key replaces the subscription token, so the process bills the key", () => {
+  withEnv({ CLAUDE_CODE_OAUTH_TOKEN: "oat", ANTHROPIC_API_KEY: "sk-ant-api-own" }, () => {
+    const env = claudeEnv({ apiKey: "sk-ant-api-purchases" });
+    assert.equal(env.ANTHROPIC_API_KEY, "sk-ant-api-purchases");
+    assert.equal("CLAUDE_CODE_OAUTH_TOKEN" in env, false);
+    assert.equal("ANTHROPIC_BASE_URL" in env, false);
+    const viaGateway = claudeEnv({ apiKey: "gateway-key", baseUrl: "https://cloud-api.near.ai" });
+    assert.deepEqual([viaGateway.ANTHROPIC_API_KEY, viaGateway.ANTHROPIC_BASE_URL], ["gateway-key", "https://cloud-api.near.ai"]);
   });
 });

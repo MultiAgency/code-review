@@ -28,6 +28,13 @@ export default defineConfig({
       GITHUB_APP_ID: bindings.secret(),
       GITHUB_APP_PRIVATE_KEY: bindings.secret(),
       CLAUDE_CODE_OAUTH_TOKEN: bindings.secret(),
+      // Purchased reviews: the gateway's token, the NEAR AI Cloud key they are billed to, and a token
+      // to read public pull requests the App is not installed on.
+      PURCHASE_TOKEN: bindings.secret(),
+      PURCHASE_ANTHROPIC_API_KEY: bindings.secret(),
+      GITHUB_TOKEN: bindings.secret(),
+      PURCHASE_ANTHROPIC_BASE_URL: bindings.text("https://cloud-api.near.ai"),
+      PURCHASE_GATEWAY: bindings.text("https://multiagency-x402.multidaomensional.workers.dev"),
       // Post reviews on PRs, with the model pinned. Which repositories are reviewed is decided by
       // where the GitHub App is installed (no ALLOWED_REPOS).
       POST_REVIEWS: bindings.text("true"),

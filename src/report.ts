@@ -60,6 +60,30 @@ export interface ReviewReport {
    * or state. What was checked is a count unless `verbose`.
    */
   renderText(options?: { verbose?: boolean }): string;
+  /** The review as data, for a caller that reads it by program: secrets redacted, no state. */
+  renderData(): ReportData;
+}
+
+export interface ReportData {
+  /** The commit that was reviewed. */
+  head: string;
+  summary: string;
+  verification: ReviewResult["verification"];
+  findings: Array<{
+    file: string;
+    line: number;
+    severity: Finding["severity"];
+    category: Finding["category"];
+    title: string;
+    body: string;
+    existing_code: string;
+    suggestion?: string;
+    fix_code?: string;
+  }>;
+  /** What the review says it traced. */
+  checked: string[];
+  /** Changed files left out of the review (lockfiles, build output...). */
+  skipped: number;
 }
 
 export type FailureReason =
@@ -88,6 +112,11 @@ const FAILURE_TEXT: Record<FailureReason, string> = {
   interrupted: "The service restarted during the review.",
   unknown: "Something unexpected went wrong.",
 };
+
+/** One sentence saying why a review failed. */
+export function failureText(reason: FailureReason): string {
+  return FAILURE_TEXT[reason];
+}
 
 export const SUMMARY_MARKER = "<!-- private-review:summary -->";
 const STATE_PREFIX = "<!-- private-review:state ";
@@ -342,6 +371,26 @@ export function buildReport(
         );
       if (result.skipped) lines.push("", skippedText(result.skipped));
       return lines.join("\n");
+    },
+    renderData() {
+      return {
+        head: ctx.headSha,
+        summary: plain(result.summary),
+        verification: result.verification,
+        findings: current.map((f) => ({
+          file: f.file,
+          line: f.line,
+          severity: f.severity,
+          category: f.category,
+          title: plain(f.title),
+          body: plain(f.body),
+          existing_code: plain(f.existing_code),
+          ...(f.suggestion ? { suggestion: plain(f.suggestion) } : {}),
+          ...(f.fix_code ? { fix_code: plain(f.fix_code) } : {}),
+        })),
+        checked: result.checked.map(plain),
+        skipped: result.skipped,
+      };
     },
   };
 }

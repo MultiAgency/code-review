@@ -25,6 +25,12 @@ before(async () => {
         ),
         stats: () => ({ running: 1, queued: 2 }),
       },
+      purchases: {
+        token: "gateway-t0ken",
+        gateway: "https://gateway.test",
+        admit: async (_repo, prNumber) =>
+          prNumber === 13 ? { error: "too_large", message: "Too large." } : undefined,
+      },
     }),
   );
   await new Promise<void>((resolve) => server.listen(0, resolve));
@@ -109,4 +115,82 @@ test("queues review-worthy events with their delivery id; ignores the rest", asy
     204,
   );
   assert.equal((await fetch(`${url}/nope`)).status, 404);
+});
+
+const purchaseId = "3f2b6c1e-8a4d-4e0b-9c57-1d2a7f6b9e10";
+const purchase = (
+  over: { pr?: number; callbackUrl?: string; token?: string; deadline?: string } = {},
+) =>
+  fetch(`${url}/jobs`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${over.token ?? "gateway-t0ken"}` },
+    body: JSON.stringify({
+      id: purchaseId,
+      input: { repo: "o/r", pr: over.pr ?? 5 },
+      ...(over.deadline !== undefined ? { deadline: over.deadline } : {}),
+      callback: {
+        url: over.callbackUrl ?? `https://gateway.test/jobs/${purchaseId}/outcome`,
+        token: "cb",
+      },
+    }),
+  });
+
+test("a purchase from the gateway is queued as its own job", async () => {
+  const res = await purchase();
+  assert.equal(res.status, 202);
+  assert.deepEqual(submitted.at(-1), {
+    job: {
+      repo: "o/r",
+      prNumber: 5,
+      reason: "purchase",
+      purchase: {
+        id: purchaseId,
+        callback: { url: `https://gateway.test/jobs/${purchaseId}/outcome`, token: "cb" },
+      },
+    },
+    delivery: `purchase ${purchaseId}`,
+  });
+});
+
+test("a purchase's deadline from the gateway is kept with its job; one that isn't a time is refused", async () => {
+  assert.equal((await purchase({ deadline: "2026-11-26T17:00:00.000Z" })).status, 202);
+  assert.equal(submitted.at(-1)!.job.purchase!.deadline, Date.parse("2026-11-26T17:00:00.000Z"));
+  const before = submitted.length;
+  assert.equal((await purchase({ deadline: "in an hour" })).status, 400);
+  assert.equal(submitted.length, before);
+});
+
+test("a purchase needs the gateway's token and a callback under the gateway", async () => {
+  const before = submitted.length;
+  assert.equal((await purchase({ token: "wrong" })).status, 401);
+  assert.equal((await purchase({ callbackUrl: "https://elsewhere.test/outcome" })).status, 400);
+  assert.equal((await purchase({ callbackUrl: "https://gateway.test.evil.test/outcome" })).status, 400);
+  assert.equal(submitted.length, before);
+});
+
+test("a pull request that can't be reviewed is refused before anything is queued", async () => {
+  const before = submitted.length;
+  const res = await purchase({ pr: 13 });
+  assert.equal(res.status, 422);
+  assert.deepEqual(await res.json(), { error: "too_large", message: "Too large." });
+  assert.equal(submitted.length, before);
+});
+
+test("without purchase settings there is no purchase route", async () => {
+  const plain = createServer(
+    webhookHandler({
+      secret: "s3cret",
+      trigger: "@multi-review",
+      allowedRepos: [],
+      queue: { submit: () => "queued", stats: () => ({ running: 0, queued: 0 }) },
+    }),
+  );
+  await new Promise<void>((resolve) => plain.listen(0, resolve));
+  const res = await fetch(`http://127.0.0.1:${(plain.address() as AddressInfo).port}/jobs`, {
+    method: "POST",
+    headers: { authorization: "Bearer gateway-t0ken" },
+    body: "{}",
+  });
+  plain.close();
+  assert.equal(res.status, 404);
 });

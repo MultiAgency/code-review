@@ -78,6 +78,7 @@ function run(saved?: unknown) {
     save(data: unknown) {
       r.saved = data;
     },
+    finalAttempt: false,
   };
   return r;
 }

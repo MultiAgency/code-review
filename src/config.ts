@@ -112,8 +112,24 @@ const Env = z.object({
   GITHUB_APP_PRIVATE_KEY: optionalText.transform((v) =>
     v?.replace(/\\n/g, "\n"),
   ),
-  // Fallback when not running as a GitHub App (fine-grained PAT).
+  // Fallback when not running as a GitHub App (fine-grained PAT). Purchased reviews always use it,
+  // since the pull requests they cover are in repositories the App is not installed on.
   GITHUB_TOKEN: optionalText,
+
+  // Purchased reviews (sold through a payment gateway). Set the first three together to turn them on.
+  // The bearer token the gateway presents to start a review.
+  PURCHASE_TOKEN: optionalText,
+  // The gateway's base URL; outcomes are only ever delivered under it.
+  PURCHASE_GATEWAY: optionalText.pipe(z.url().optional()),
+  // The Anthropic API key purchased reviews are billed to, never a subscription token.
+  PURCHASE_ANTHROPIC_API_KEY: optionalText,
+  // Set when that key belongs to a gateway serving the Anthropic Messages API (e.g. NEAR AI Cloud,
+  // https://cloud-api.near.ai); unset bills Anthropic directly.
+  PURCHASE_ANTHROPIC_BASE_URL: optionalText.pipe(z.url().optional()),
+  // Cap per purchased review across all its passes. Keep it below the price charged.
+  PURCHASE_BUDGET_USD: num(0.95, (s) => s.positive()),
+  // Pull requests changing more lines than this are refused before the buyer is charged.
+  PURCHASE_MAX_CHANGED_LINES: num(4000, (s) => s.int().positive()),
 });
 
 export type Config = z.output<typeof Env>;
@@ -161,8 +177,31 @@ export function checkServiceConfig(config: Config): void {
     problems.push(
       "  GitHub auth: set GITHUB_APP_ID + GITHUB_APP_PRIVATE_KEY, or GITHUB_TOKEN",
     );
+  const purchase = [config.PURCHASE_TOKEN, config.PURCHASE_GATEWAY, config.PURCHASE_ANTHROPIC_API_KEY];
+  if (purchase.some(Boolean)) {
+    if (!purchase.every(Boolean))
+      problems.push(
+        "  PURCHASE_TOKEN, PURCHASE_GATEWAY and PURCHASE_ANTHROPIC_API_KEY: set all three, or none",
+      );
+    if (!config.GITHUB_TOKEN)
+      problems.push("  GITHUB_TOKEN: required for purchased reviews");
+  }
   if (problems.length)
     throw new ConfigError(`Invalid configuration:\n${problems.join("\n")}`);
+}
+
+/** The settings for purchased reviews, or undefined when they are off. */
+export function purchaseSettings(config: Config) {
+  const { PURCHASE_TOKEN: token, PURCHASE_GATEWAY: gateway, PURCHASE_ANTHROPIC_API_KEY: apiKey } = config;
+  if (!token || !gateway || !apiKey) return undefined;
+  return {
+    token,
+    gateway,
+    apiKey,
+    baseUrl: config.PURCHASE_ANTHROPIC_BASE_URL,
+    budgetUsd: config.PURCHASE_BUDGET_USD,
+    maxChangedLines: config.PURCHASE_MAX_CHANGED_LINES,
+  };
 }
 
 export function agentOptions(config: Config): SdkAgentOptions {

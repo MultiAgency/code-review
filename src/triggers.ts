@@ -2,12 +2,19 @@ export interface ReviewJob {
   repo: string;
   prNumber: number;
   installationId?: number;
-  reason: "opened" | "ready_for_review" | "comment";
+  reason: "opened" | "ready_for_review" | "comment" | "purchase";
   /** The triggering comment, for comment-requested reviews. */
   commentId?: number;
   /** `@multi-review full`: review the whole PR, not just new commits. */
   full?: boolean;
   requestedBy?: string;
+  /** Set for a purchased review: the buyer's job, and where its outcome is delivered. */
+  purchase?: {
+    id: string;
+    /** The last moment (epoch ms) the gateway can collect the payment, when it says. */
+    deadline?: number;
+    callback: { url: string; token: string };
+  };
 }
 
 export type TriggerDecision = { job: ReviewJob } | { skip: string };

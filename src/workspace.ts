@@ -68,6 +68,14 @@ const SKIP_GLOBS = [
 ];
 const EXCLUDES = SKIP_GLOBS.map((g) => `:(exclude,glob)${g}`);
 
+/**
+ * Whether a changed file is one every review leaves out (`SKIP_GLOBS`), judged without git. Where this and git's
+ * pathspec matching differ (paths under dot-directories), it answers no, so a file is never wrongly called skipped.
+ */
+export function isSkipped(path: string): boolean {
+  return SKIP_GLOBS.some((glob) => posix.matchesGlob(path, glob));
+}
+
 // Pinned so the parser never depends on config; --no-textconv / --no-ext-diff
 // stop a PR's .gitattributes from selecting a diff program.
 const DIFF_FLAGS = [

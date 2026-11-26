@@ -292,3 +292,19 @@ test("a job superseded while it reports waiting is not queued again", async () =
   assert.deepEqual(runs, ["opened", "comment"]);
   await q.close(0);
 });
+
+test("purchased reviews of one PR run side by side, and leave its own review alone", async () => {
+  const w = controlled();
+  const q = openReviewQueue(w.work, { ...fast, concurrency: 3, dbPath: ":memory:" });
+  const purchase = (id: string) =>
+    job(1, { reason: "purchase", purchase: { id, callback: { url: "https://gateway.test/o", token: "t" } } });
+  q.submit(job(1), "d1");
+  q.submit(purchase("a"), "purchase a");
+  q.submit(purchase("b"), "purchase b");
+  await settle();
+  assert.equal(w.calls.length, 3);
+  assert.ok(w.calls.every((c) => !c.signal.aborted));
+  w.calls.forEach((c) => c.finish());
+  await q.whenIdle();
+  await q.close(0);
+});
