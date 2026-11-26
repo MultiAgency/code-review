@@ -9,7 +9,12 @@ export interface ReviewJob {
   full?: boolean;
   requestedBy?: string;
   /** Set for a purchased review: the buyer's job, and where its outcome is delivered. */
-  purchase?: { id: string; callback: { url: string; token: string } };
+  purchase?: {
+    id: string;
+    /** The last moment (epoch ms) the gateway can collect the payment, when it says. */
+    deadline?: number;
+    callback: { url: string; token: string };
+  };
 }
 
 export type TriggerDecision = { job: ReviewJob } | { skip: string };

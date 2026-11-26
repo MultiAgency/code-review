@@ -1,6 +1,6 @@
 # 04 Answer the gateway within its start timeout
 
-Status: ready-for-agent
+Status: resolved
 Type: bug
 Blocked by: none
 
@@ -31,3 +31,5 @@ gateway's timeout (it would need the order time from the gateway).
   means the gateway refused or dropped it, so drop it without spending. And in `deploy/cloudflare/worker.ts`, retry the
   container start in the Durable Object for up to ~30 s instead of answering 503 at the first "no container instance";
   that also serves GitHub's webhooks.
+
+2026-11-26: Done on `purchase-deadline`: before any work, `purchaseWanted` asks the gateway for the job and drops it unless it is `running` (tests in `purchase.test.ts`, `review-work.test.ts`). Not done: retrying the container start in `worker.ts`. It can't be exercised outside Cloudflare's runtime, and purchases no longer need it now the gateway waits for `/healthz`; it stays with the webhooks' wake-up problem, to fix once it can be reproduced.

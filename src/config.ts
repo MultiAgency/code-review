@@ -127,7 +127,7 @@ const Env = z.object({
   // https://cloud-api.near.ai); unset bills Anthropic directly.
   PURCHASE_ANTHROPIC_BASE_URL: optionalText.pipe(z.url().optional()),
   // Cap per purchased review across all its passes. Keep it below the price charged.
-  PURCHASE_BUDGET_USD: num(1.5, (s) => s.positive()),
+  PURCHASE_BUDGET_USD: num(0.95, (s) => s.positive()),
   // Pull requests changing more lines than this are refused before the buyer is charged.
   PURCHASE_MAX_CHANGED_LINES: num(4000, (s) => s.int().positive()),
 });

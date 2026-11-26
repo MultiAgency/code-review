@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { GitHubError, type GitHubClient } from "../src/github.ts";
-import { callbackDelivery, failedOutcome, purchaseAdmission } from "../src/purchase.ts";
+import { attemptTime, callbackDelivery, failedOutcome, purchaseAdmission, purchaseWanted } from "../src/purchase.ts";
 
 /** GitHub answering one pull request lookup, and the list of the files it changes. */
 function github(
@@ -68,4 +68,27 @@ test("an outcome is posted to the callback with its token; a rejected delivery t
   });
 
   await assert.rejects(callbackDelivery(callback, answer(401))(failedOutcome("timeout")), /answered 401/);
+});
+
+test("a purchase is run only while its job is still running at the gateway", async () => {
+  const asked: string[] = [];
+  const wanted = (answer: () => Response) =>
+    purchaseWanted({ url: "https://gateway.test/jobs/p1/outcome", token: "cb" }, async (url) => (asked.push(String(url)), answer()))();
+  assert.equal(await wanted(() => Response.json({ id: "p1", status: "running" })), true);
+  // Refused or dropped by the gateway: nobody will collect the review.
+  assert.equal(await wanted(() => Response.json({ error: "not_found" }, { status: 404 })), false);
+  assert.equal(await wanted(() => Response.json({ id: "p1", status: "failed", reason: "timeout" })), false);
+  // An unreachable gateway is no proof the job is gone; delivering its outcome will tell.
+  assert.equal(await wanted(() => { throw new TypeError("fetch failed"); }), true);
+  assert.deepEqual([...new Set(asked)], ["https://gateway.test/jobs/p1"]);
+});
+
+test("an attempt gets the time left before the deadline less a minute to deliver, and none when too little is left", () => {
+  const now = Date.parse("2026-11-26T12:00:00Z");
+  const minutes = (n: number) => n * 60_000;
+  assert.equal(attemptTime(undefined, now, minutes(50)), minutes(50));
+  assert.equal(attemptTime(now + minutes(120), now, minutes(50)), minutes(50));
+  assert.equal(attemptTime(now + minutes(20), now, minutes(50)), minutes(19));
+  assert.equal(attemptTime(now + minutes(5), now, minutes(50)), undefined);
+  assert.equal(attemptTime(now - 1, now, minutes(50)), undefined);
 });

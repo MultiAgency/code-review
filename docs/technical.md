@@ -178,7 +178,7 @@ wrong.
 | `PURCHASE_GATEWAY`                         |                          | The gateway's base URL. Outcomes are only delivered under it                                                                                          |
 | `PURCHASE_ANTHROPIC_API_KEY`               |                          | API key purchased reviews are billed to. They never use a subscription token                                                                          |
 | `PURCHASE_ANTHROPIC_BASE_URL`              | (Anthropic)              | Set when that key belongs to a gateway serving the Anthropic Messages API, e.g. `https://cloud-api.near.ai` for NEAR AI Cloud                         |
-| `PURCHASE_BUDGET_USD`                      | `1.5`                    | Per purchased review, across all passes. Keep it below the price charged                                                                              |
+| `PURCHASE_BUDGET_USD`                      | `0.95`                   | Per purchased review, across all passes. Keep it below the price charged                                                                              |
 | `PURCHASE_MAX_CHANGED_LINES`               | `4000`                   | Larger pull requests are refused before the buyer is charged                                                                                          |
 
 ### 4. Deploy
@@ -228,6 +228,7 @@ sends `POST /jobs` with its bearer token:
 {
   "id": "3f2b6c1e-8a4d-4e0b-9c57-1d2a7f6b9e10",
   "input": { "repo": "owner/name", "pr": 12 },
+  "deadline": "2026-11-26T17:00:00.000Z",
   "callback": { "url": "https://<gateway>/jobs/<id>/outcome", "token": "..." }
 }
 ```
@@ -241,6 +242,12 @@ sends `POST /jobs` with its bearer token:
 - **The outcome** is posted to the callback with the callback's token, and nothing is written to
   GitHub: `{ "status": "done", "result": … }` with the reviewed commit, the summary and every
   finding as data, or `{ "status": "failed", "reason", "message" }` once no attempt is left.
+- **Before any work:** the service asks the gateway for the job (the callback's URL without
+  `/outcome`) and drops it, delivering nothing, unless it is still `running`: a job the gateway
+  refused or abandoned is never collected. An unreachable gateway doesn't stop the review.
+- **The deadline**, when the gateway sends one, is the last moment it can collect the payment. Each
+  attempt runs only until a minute before it, and none starts with under five minutes left; the
+  purchase is then delivered as `failed` with reason `timeout`.
 - **Isolation:** a purchased review is its buyer's own job. It never replaces, and is never
   replaced by, another review of the same pull request.
 

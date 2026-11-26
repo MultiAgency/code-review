@@ -115,7 +115,7 @@ const purchased: ReviewJob = {
 };
 
 /** Purchase work whose outcomes are collected instead of posted to the callback. */
-function purchaseWork(gh: ReturnType<typeof fakeGitHub>, runner = agent()) {
+function purchaseWork(gh: ReturnType<typeof fakeGitHub>, runner = agent(), wanted = true) {
   const delivered: PurchaseOutcome[] = [];
   const callbacks: string[] = [];
   const work = reviewWork(loadConfig({ POST_REVIEWS: "true", GITHUB_TOKEN: "ghp_x" }), {
@@ -123,6 +123,7 @@ function purchaseWork(gh: ReturnType<typeof fakeGitHub>, runner = agent()) {
     agent: runner,
     github: () => ({ gh: gh.gh, gitEnv: async () => ({}) }),
     deliver: (callback) => (callbacks.push(callback.url), async (outcome) => void delivered.push(outcome)),
+    wanted: () => async () => wanted,
   });
   return { work, delivered, callbacks };
 }
@@ -167,4 +168,28 @@ test("a purchase's failure is delivered only when no attempt is left", async () 
   const last = purchaseWork(gh, overloaded());
   assert.equal((await last.work(purchased, run(true))).kind, "failed");
   assert.deepEqual(last.delivered.map((o) => [o.status, o.status === "failed" && o.reason]), [["failed", "overloaded"]]);
+});
+
+/** An agent that fails the test if a review is started. */
+const untouched = () =>
+  scriptedAgent(() => {
+    throw new Error("the review should not have run");
+  }).runner;
+
+test("a purchase the gateway no longer has is dropped: not reviewed, and nothing delivered", async () => {
+  const p = pr();
+  const gh = fakeGitHub({ head: p.head, base: p.base, cloneUrl: p.cloneUrl });
+  const { work, delivered } = purchaseWork(gh, untouched(), false);
+  assert.equal((await work(purchased, run())).kind, "skipped");
+  assert.deepEqual(delivered, []);
+});
+
+test("a purchase too close to its deadline is delivered as timed out, without a review", async () => {
+  const p = pr();
+  const gh = fakeGitHub({ head: p.head, base: p.base, cloneUrl: p.cloneUrl });
+  const { work, delivered } = purchaseWork(gh, untouched());
+  const late = { ...purchased, purchase: { ...purchased.purchase!, deadline: Date.now() + 60_000 } };
+  const outcome = await work(late, run());
+  assert.deepEqual([outcome.kind, outcome.kind === "failed" && outcome.reason], ["failed", "timeout"]);
+  assert.deepEqual(delivered.map((o) => [o.status, o.status === "failed" && o.reason]), [["failed", "timeout"]]);
 });

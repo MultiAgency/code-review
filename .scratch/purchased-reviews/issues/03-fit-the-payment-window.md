@@ -1,6 +1,6 @@
 # 03 Fit a purchase's attempts inside the payment window
 
-Status: ready-for-agent
+Status: resolved
 Type: decision
 Blocked by: none
 
@@ -29,3 +29,5 @@ gateway's to choose. Gateway side done on branch `deadline-and-wake` in `slop/ga
 "a backend is handed the moment its job's payment stops being collectable". Left here: read the optional `deadline`
 in `PurchaseRequest`; in the queue, start no attempt too close to it, cut each attempt's timeout to the time left, and
 end a purchase past it as `failed: timeout` without running it. Supersedes the 15-minute setting above.
+
+2026-11-26: Done on `purchase-deadline`: `deadline` is parsed with the job (`purchase.ts`, `server.ts`), and `attemptTime` gives each attempt the time left less a minute to deliver; under five minutes left, the purchase is delivered as `failed: timeout` without a review. Tests in `purchase.test.ts`, `review-work.test.ts`, `server.test.ts`.

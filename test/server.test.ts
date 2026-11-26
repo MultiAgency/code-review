@@ -119,7 +119,7 @@ test("queues review-worthy events with their delivery id; ignores the rest", asy
 
 const purchaseId = "3f2b6c1e-8a4d-4e0b-9c57-1d2a7f6b9e10";
 const purchase = (
-  over: { pr?: number; callbackUrl?: string; token?: string } = {},
+  over: { pr?: number; callbackUrl?: string; token?: string; deadline?: string } = {},
 ) =>
   fetch(`${url}/jobs`, {
     method: "POST",
@@ -127,6 +127,7 @@ const purchase = (
     body: JSON.stringify({
       id: purchaseId,
       input: { repo: "o/r", pr: over.pr ?? 5 },
+      ...(over.deadline !== undefined ? { deadline: over.deadline } : {}),
       callback: {
         url: over.callbackUrl ?? `https://gateway.test/jobs/${purchaseId}/outcome`,
         token: "cb",
@@ -149,6 +150,14 @@ test("a purchase from the gateway is queued as its own job", async () => {
     },
     delivery: `purchase ${purchaseId}`,
   });
+});
+
+test("a purchase's deadline from the gateway is kept with its job; one that isn't a time is refused", async () => {
+  assert.equal((await purchase({ deadline: "2026-11-26T17:00:00.000Z" })).status, 202);
+  assert.equal(submitted.at(-1)!.job.purchase!.deadline, Date.parse("2026-11-26T17:00:00.000Z"));
+  const before = submitted.length;
+  assert.equal((await purchase({ deadline: "in an hour" })).status, 400);
+  assert.equal(submitted.length, before);
 });
 
 test("a purchase needs the gateway's token and a callback under the gateway", async () => {

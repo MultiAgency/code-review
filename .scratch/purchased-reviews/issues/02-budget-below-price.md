@@ -1,6 +1,6 @@
 # 02 Keep a purchased review's budget below its price
 
-Status: ready-for-agent
+Status: resolved
 Type: decision
 Blocked by: none
 
@@ -31,3 +31,5 @@ the same effort either way. So the line limit is not what puts a sale at risk; a
 (`costUsd`) until there are enough to see the spread. Two samples are not a distribution.
 
 2026-11-26, decided: `PURCHASE_BUDGET_USD` default 0.95; 4,000-line limit kept.
+
+2026-11-26: Done on `purchase-deadline`: the default is now 0.95, and `docs/technical.md` says so.

@@ -129,7 +129,7 @@ export function webhookHandler(options: WebhookOptions): RequestListener {
       json(400, { error: "invalid_request", message: "Not a purchase this service accepts." });
       return;
     }
-    const { id, input, callback } = request.data;
+    const { id, input, deadline, callback } = request.data;
     const refusal = await purchases.admit(input.repo, input.pr);
     if (refusal) {
       log({ pr: `${input.repo}#${input.pr}`, msg: "purchase refused", reason: refusal.error, purchase: id });
@@ -137,7 +137,12 @@ export function webhookHandler(options: WebhookOptions): RequestListener {
       return;
     }
     const result = options.queue.submit(
-      { repo: input.repo, prNumber: input.pr, reason: "purchase", purchase: { id, callback } },
+      {
+        repo: input.repo,
+        prNumber: input.pr,
+        reason: "purchase",
+        purchase: { id, ...(deadline !== undefined ? { deadline: Date.parse(deadline) } : {}), callback },
+      },
       `purchase ${id}`,
     );
     log({ pr: `${input.repo}#${input.pr}`, msg: result, reason: "purchase", purchase: id });

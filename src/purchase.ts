@@ -12,6 +12,8 @@ export const PurchaseRequest = z.object({
     repo: z.string().regex(/^[\w.-]+\/[\w.-]+$/),
     pr: z.number().int().positive(),
   }),
+  /** The last moment the gateway can collect the payment: a review delivered after it is not paid for. */
+  deadline: z.iso.datetime().optional(),
   callback: z.object({ url: z.url(), token: z.string().min(1) }),
 });
 export type PurchaseRequest = z.infer<typeof PurchaseRequest>;
@@ -56,6 +58,44 @@ export function purchaseAdmission(
         message: "The pull request changes only lockfiles, build output or vendored code, which a review leaves out.",
       };
     return undefined;
+  };
+}
+
+/** Time a purchase's outcome needs to reach the gateway before its deadline. */
+const DELIVERY_MARGIN_MS = 60_000;
+/** Less time than this left for an attempt is not worth starting: a review takes a few minutes. */
+const MIN_ATTEMPT_MS = 5 * 60_000;
+
+/**
+ * How long a purchase's next attempt may run: what is left before its deadline, less the time to deliver, capped at
+ * `maxMs`. Undefined when too little is left to start one.
+ */
+export function attemptTime(deadline: number | undefined, now: number, maxMs: number): number | undefined {
+  if (deadline === undefined) return maxMs;
+  const left = deadline - now - DELIVERY_MARGIN_MS;
+  return left < MIN_ATTEMPT_MS ? undefined : Math.min(left, maxMs);
+}
+
+/**
+ * Asks the gateway whether a purchase's job is still running, before any money is spent on it. A refused or dropped
+ * job is gone (404) and an ended one has a final status; either way nobody will collect the review. An unreachable
+ * gateway is no proof the job is gone, so the purchase goes ahead and delivering its outcome will tell.
+ */
+export function purchaseWanted(
+  callback: PurchaseRequest["callback"],
+  send: typeof fetch = fetch,
+): () => Promise<boolean> {
+  const status = callback.url.replace(/\/outcome$/, "");
+  return async () => {
+    try {
+      const res = await send(status, { signal: AbortSignal.timeout(10_000) });
+      if (res.status === 404) return false;
+      if (!res.ok) return true;
+      const job = (await res.json()) as { status?: unknown };
+      return job.status === "running";
+    } catch {
+      return true;
+    }
   };
 }
 

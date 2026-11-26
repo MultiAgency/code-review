@@ -7,7 +7,15 @@ import { gitAuthEnv } from "./env.js";
 import { githubClient, installationToken, type GitHubClient } from "./github.js";
 import { runReviewJob } from "./job.js";
 import { githubPublisher, logPublisher, type IssueComment, type Publisher } from "./publisher.js";
-import { callbackDelivery, failedOutcome, purchasePublisher, type Deliver } from "./purchase.js";
+import type { JobOutcome } from "./job.js";
+import {
+  attemptTime,
+  callbackDelivery,
+  failedOutcome,
+  purchasePublisher,
+  purchaseWanted,
+  type Deliver,
+} from "./purchase.js";
 import type { Work } from "./queue.js";
 import type { ReviewOptions } from "./review.js";
 import type { ReviewJob } from "./triggers.js";
@@ -30,6 +38,8 @@ export interface ReviewWorkOptions {
   github?: (installationId: number | undefined) => GitHubAccess;
   /** Defaults to posting a purchased review's outcome to its callback. */
   deliver?: (callback: { url: string; token: string }) => Deliver;
+  /** Defaults to asking the gateway whether the purchase's job is still running. */
+  wanted?: (callback: { url: string; token: string }) => () => Promise<boolean>;
 }
 
 export function reviewWork(config: Config, options: ReviewWorkOptions): Work {
@@ -51,11 +61,17 @@ export function reviewWork(config: Config, options: ReviewWorkOptions): Work {
         })
       : agent);
   const deliver = options.deliver ?? callbackDelivery;
+  const wanted = options.wanted ?? purchaseWanted;
 
   const review = (
     job: ReviewJob,
     run: Parameters<Work>[1],
-    using: { agent: AgentRunner; reviewOptions: ReviewOptions; publisher: (gh: GitHubClient) => Promise<Publisher> },
+    using: {
+      agent: AgentRunner;
+      reviewOptions: ReviewOptions;
+      publisher: (gh: GitHubClient) => Promise<Publisher>;
+      timeoutMs: number;
+    },
   ) => {
     const { gh, gitEnv } = github(job.installationId);
     return using.publisher(gh).then((publisher) =>
@@ -70,7 +86,7 @@ export function reviewWork(config: Config, options: ReviewWorkOptions): Work {
           publisher,
           trigger: config.REVIEW_TRIGGER,
           log,
-          timeoutMs: config.REVIEW_JOB_TIMEOUT_MIN * 60_000,
+          timeoutMs: using.timeoutMs,
         },
         run,
       ),
@@ -82,15 +98,25 @@ export function reviewWork(config: Config, options: ReviewWorkOptions): Work {
       log({ pr: `${job.repo}#${job.prNumber}`, ...fields });
 
     if (job.purchase) {
+      // Nothing is spent on a purchase the gateway has refused or dropped: nobody would collect it.
+      if (!(await wanted(job.purchase.callback)())) {
+        jobLog({ msg: "purchase dropped: the gateway no longer has it", purchase: job.purchase.id });
+        return { kind: "skipped", why: "the gateway no longer has this purchase" };
+      }
       const report = deliver(job.purchase.callback);
-      const outcome = await review(job, run, {
-        agent: purchaseAgent,
-        reviewOptions: {
-          ...reviewOptions(config),
-          reviewBudgetUsd: purchases?.budgetUsd ?? config.REVIEW_BUDGET_USD,
-        },
-        publisher: async () => purchasePublisher(report),
-      });
+      const timeoutMs = attemptTime(job.purchase.deadline, Date.now(), config.REVIEW_JOB_TIMEOUT_MIN * 60_000);
+      const outcome: JobOutcome =
+        timeoutMs === undefined
+          ? { kind: "failed", reason: "timeout", transient: false, error: "Too little time is left before the purchase's deadline." }
+          : await review(job, run, {
+              agent: purchaseAgent,
+              reviewOptions: {
+                ...reviewOptions(config),
+                reviewBudgetUsd: purchases?.budgetUsd ?? config.REVIEW_BUDGET_USD,
+              },
+              publisher: async () => purchasePublisher(report),
+              timeoutMs,
+            });
       // The buyer hears of a failure once, when no attempt is left that could still succeed.
       const ended =
         outcome.kind === "skipped"
@@ -108,6 +134,7 @@ export function reviewWork(config: Config, options: ReviewWorkOptions): Work {
     return review(job, run, {
       agent,
       reviewOptions: reviewOptions(config),
+      timeoutMs: config.REVIEW_JOB_TIMEOUT_MIN * 60_000,
       publisher: async (gh) =>
         publish
           ? githubPublisher({
