@@ -1,6 +1,6 @@
 # 06 Deploy, then one paid review end to end
 
-Status: ready-for-human
+Status: resolved
 Type: task
 Blocked by: none
 
@@ -28,3 +28,9 @@ Blocked by: none
 - Left: one real order on mainnet, through Coinbase's facilitator. It needs a buyer wallet with USDC on Base;
   `testnet-run.mjs` refuses mainnet by design. That first settled call is also what lists the route on agentic.market.
 
+
+2026-11-26, the first mainnet order: `dashboard#102` through the live gateway, paid from a throwaway buyer wallet. 202,
+the review delivered (`4284ab7`, 0 findings) in about 30 s, and 1 USDC charged once:
+`0x1cbb4f9ffa4630f23bbbbde5d497177d837867ae575e2494ea4e0298fba6f891` (block 62609162), one transfer of 1 USDC to
+`PAY_TO`. Per Coinbase's docs, this first settled call is what lists the route on agentic.market, 10 to 15 minutes
+later.

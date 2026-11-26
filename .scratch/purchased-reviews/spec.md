@@ -52,8 +52,8 @@ callback's bearer token is the job's, and the backend only delivers under the ga
 
 ## Status, 2026-11-26
 
-01 to 04 done and merged (`code-review#11`, `x402-gateway#1`); 05 and 07 accepted as they are; 06 live on both sides,
-proven end to end on Base Sepolia, with one real mainnet order left.
+01 to 04 done and merged (`code-review#11`, `x402-gateway#1`); 05 and 07 accepted as they are; 06 live on both sides
+and proven on mainnet, the first order settled on Base. Nothing left open.
 
 ## Order
 
