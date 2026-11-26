@@ -61,6 +61,8 @@ GitHub ─webhook─▶ HTTP adapter ─▶ review queue ─▶ PR workspace ─
 6. **Publishing.**
    - **One summary comment per PR**, edited in place each time. It carries hidden state (the
      reviewed commit, and fingerprints of posted findings), so a finding is never posted twice.
+     It lists every open finding, new or from an earlier review: in full when it has no inline
+     comment, as one line pointing to the comment when it does.
    - **Inline comments** are posted as one Comment review pinned to the reviewed commit. Only
      high- and medium-severity findings get them, up to `REVIEW_MAX_INLINE_COMMENTS`. They're
      placed by matching the quoted code. Findings that can't go inline go on the file or in

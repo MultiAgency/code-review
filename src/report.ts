@@ -26,6 +26,16 @@ export interface StoredFinding {
   commented: boolean;
 }
 
+/**
+ * One finding in a report: what is stored for it, whether an earlier review
+ * had it open, and, when this review reported it, the finding itself.
+ */
+interface Entry {
+  stored: StoredFinding;
+  earlier: boolean;
+  finding?: Finding & { fp: string };
+}
+
 export interface PlannedComment {
   fp: string;
   path: string;
@@ -184,11 +194,34 @@ export function buildReport(
     ctx.prior.head !== ctx.headSha;
   const fixed = new Set(ctx.mode === "incremental" ? result.resolved : []);
   const earlierOpen = (ctx.prior?.findings ?? []).filter(
-    (f) => f.status === "open" && !currentFps.has(f.fp),
+    (f) => f.status === "open",
   );
+  const earlierFps = new Set(earlierOpen.map((f) => f.fp));
+  const notReported = earlierOpen.filter((f) => !currentFps.has(f.fp));
   const isResolved = (f: StoredFinding) => sawEverything || fixed.has(f.fp);
-  const resolved = earlierOpen.filter(isResolved);
-  const stillOpen = earlierOpen.filter((f) => !isResolved(f));
+
+  /**
+   * Every finding on the PR: what this review reported, new or found again,
+   * and the earlier ones it didn't report, still open or resolved. The
+   * summary, the plain text and the state are all read from it, so a finding
+   * can't be counted in one place and missing from another.
+   */
+  const record = (posted: ReadonlySet<string>): Entry[] => [
+    ...current.map((f) => ({
+      finding: f,
+      earlier: earlierFps.has(f.fp),
+      stored: stored(f, "open", posted.has(f.fp) || commentedBefore(f.fp)),
+    })),
+    ...notReported.map((f) => ({
+      earlier: true,
+      stored: isResolved(f) ? { ...f, status: "resolved" as const } : f,
+    })),
+  ];
+  const grouped = (entries: Entry[]) => ({
+    fresh: entries.filter((e) => !e.earlier),
+    stillOpen: entries.filter((e) => e.earlier && e.stored.status === "open"),
+    resolved: entries.filter((e) => e.stored.status === "resolved"),
+  });
 
   return {
     headSha: ctx.headSha,
@@ -198,24 +231,13 @@ export function buildReport(
       `Inline findings for \`${ctx.headSha.slice(0, 7)}\`; see the summary comment for the rest.`,
     ),
     renderSummary(posted) {
+      const entries = record(posted);
+      const { fresh, stillOpen, resolved } = grouped(entries);
       const state: ReviewState = {
         v: 1,
         head: ctx.headSha,
-        findings: [
-          ...current.map((f) =>
-            stored(
-              f,
-              "open",
-              posted.has(f.fp) || commentedBefore(f.fp),
-            ),
-          ),
-          ...stillOpen,
-          ...resolved.map((f) => ({ ...f, status: "resolved" as const })),
-        ],
+        findings: entries.map((e) => e.stored),
       };
-      const notCommented = current.filter(
-        (f) => !posted.has(f.fp) && !commentedBefore(f.fp),
-      );
       const head = [
         SUMMARY_MARKER,
         `### Multi Review · \`${ctx.headSha.slice(0, 7)}\`${ctx.mode === "incremental" ? ` (changes since \`${ctx.prior!.head.slice(0, 7)}\`)` : ""}`,
@@ -231,8 +253,8 @@ export function buildReport(
         clean(result.summary),
         "",
         countsLine(
-          current.length,
-          current.filter((f) => posted.has(f.fp) || alreadyPosted.has(f.fp)).length,
+          fresh.length,
+          fresh.filter((e) => e.stored.commented).length,
           stillOpen.length,
           resolved.length,
           result.dropped,
@@ -258,23 +280,15 @@ export function buildReport(
         `${STATE_PREFIX}${encodeState(state)} -->`,
       ];
       const sections: string[][] = [];
-      if (notCommented.length) {
-        sections.push([
-          "",
-          "#### Findings",
-          "",
-          ...notCommented.map((f) => summaryEntry(f)),
-        ]);
+      if (fresh.length) {
+        sections.push(["", "#### Findings", "", ...fresh.map(summaryEntry)]);
       }
       if (stillOpen.length) {
         sections.push([
           "",
           "#### Still open from earlier reviews",
           "",
-          ...stillOpen.map(
-            (f) =>
-              `- ${SEVERITY[f.severity]} \`${f.file}:${f.line}\` ${clean(f.title)}`,
-          ),
+          ...stillOpen.map(summaryEntry),
         ]);
       }
       if (resolved.length) {
@@ -282,12 +296,15 @@ export function buildReport(
           "",
           "#### Resolved since the last review",
           "",
-          ...resolved.map((f) => `- ✅ ~~${clean(f.title)}~~ \`${f.file}\``),
+          ...resolved.map(
+            (e) => `- ✅ ~~${clean(e.stored.title)}~~ \`${e.stored.file}\``,
+          ),
         ]);
       }
       return fit(head, sections, footer);
     },
     renderText(options = {}) {
+      const { fresh, stillOpen, resolved } = grouped(record(new Set()));
       const lines = [
         `Multi Review · ${ctx.headSha.slice(0, 7)}${ctx.mode === "incremental" ? ` (changes since ${ctx.prior!.head.slice(0, 7)})` : ""}`,
       ];
@@ -300,7 +317,7 @@ export function buildReport(
         plain(result.summary),
         "",
         countsLine(
-          current.length,
+          fresh.length,
           0,
           stillOpen.length,
           resolved.length,
@@ -308,25 +325,13 @@ export function buildReport(
           false,
         ),
       );
-      const indent = (text: string) => plain(text).replace(/\n/g, "\n    ");
-      if (current.length) {
-        lines.push("", "Findings");
-        for (const f of current) {
-          const heading =
-            f.pass || f.label ? badge(f) : `${SEVERITY[f.severity]} · ${f.category}`;
-          lines.push(`  ${plain(heading)}  ${f.file}:${f.line}  ${plain(f.title)}`);
-          if (f.body) lines.push(`    ${indent(f.body)}`);
-          if (f.suggestion) lines.push(`    Suggested fix: ${indent(f.suggestion)}`);
-        }
-      }
-      if (stillOpen.length) {
-        lines.push("", "Still open from earlier reviews");
-        for (const f of stillOpen)
-          lines.push(`  ${SEVERITY[f.severity]}  ${f.file}:${f.line}  ${plain(f.title)}`);
-      }
+      if (fresh.length) lines.push("", "Findings", ...fresh.map(textEntry));
+      if (stillOpen.length)
+        lines.push("", "Still open from earlier reviews", ...stillOpen.map(textEntry));
       if (resolved.length) {
         lines.push("", "Resolved since the last review");
-        for (const f of resolved) lines.push(`  ✅ ${f.file}  ${plain(f.title)}`);
+        for (const e of resolved)
+          lines.push(`  ✅ ${e.stored.file}  ${plain(e.stored.title)}`);
       }
       if (result.checked.length)
         lines.push(
@@ -416,17 +421,38 @@ function commentBody(f: Finding & { fp: string }, exact: boolean): string {
   return parts.join("\n\n");
 }
 
-function summaryEntry(f: Finding): string {
-  const where = `\`${f.file}${f.placement.kind === "lines" ? `:${f.placement.start}` : `:${f.line}`}\``;
+/**
+ * A finding in the summary. One with an inline comment is a line pointing to
+ * it; any other is shown in full, since the summary is the only place it is.
+ */
+function summaryEntry({ stored: s, finding: f }: Entry): string {
+  const line = f?.placement.kind === "lines" ? f.placement.start : s.line;
+  const head = `- ${f ? badge(f) : SEVERITY[s.severity]} \`${s.file}:${line}\``;
+  if (s.commented) return `${head} ${clean(f?.title ?? s.title)} (commented inline)`;
   const text = [
-    `- ${badge(f)} ${where} **${clean(f.title)}**`,
-    `  ${clean(f.body).replace(/\n/g, "\n  ")}`,
+    `${head} **${clean(f?.title ?? s.title)}**`,
+    `  ${clean(f?.body ?? s.body).replace(/\n/g, "\n  ")}`,
   ];
-  if (f.suggestion)
+  if (f?.suggestion)
     text.push(
       `  _Suggested fix:_ ${clean(f.suggestion).replace(/\n/g, "\n  ")}`,
     );
   return text.join("\n");
+}
+
+/** A finding as plain text, always in full: a terminal has no inline comments. */
+function textEntry({ stored: s, finding: f }: Entry): string {
+  const heading = f
+    ? f.pass || f.label
+      ? badge(f)
+      : `${SEVERITY[f.severity]} · ${f.category}`
+    : SEVERITY[s.severity];
+  const indent = (text: string) => plain(text).replace(/\n/g, "\n    ");
+  const lines = [`  ${plain(heading)}  ${s.file}:${s.line}  ${plain(f?.title ?? s.title)}`];
+  const body = f?.body ?? s.body;
+  if (body) lines.push(`    ${indent(body)}`);
+  if (f?.suggestion) lines.push(`    Suggested fix: ${indent(f.suggestion)}`);
+  return lines.join("\n");
 }
 
 function countsLine(
