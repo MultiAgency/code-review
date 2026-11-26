@@ -1,6 +1,6 @@
 # 07 Purchases and the organization's reviews share budget and capacity
 
-Status: needs-triage
+Status: wontfix
 Type: decision
 Blocked by: none
 
@@ -10,3 +10,9 @@ and the team's reviews can make a purchase wait into its payment window (03).
 
 Decide whether purchases get their own daily limit and a share of the concurrency, or whether sharing is fine at the
 volumes expected.
+
+## Comments
+
+2026-11-26, decided: share for now. At about $0.70 a review and low expected volume, the $50 daily limit and two
+review slots are enough for both. Revisit when `GET /sales` on the gateway shows real volume.
+

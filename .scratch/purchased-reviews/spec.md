@@ -50,6 +50,11 @@ callback's bearer token is the job's, and the backend only delivers under the ga
 6. **Purchases share the reviewer's daily budget and concurrency** with the organization's own reviews: a busy day of
    purchases can stop the team's reviews, and the reverse. Not decided whether that is wanted. → 07
 
+## Status, 2026-11-26
+
+01 to 04 done and merged (`code-review#11`, `x402-gateway#1`); 05 and 07 accepted as they are; 06 live on both sides,
+proven end to end on Base Sepolia, with one real mainnet order left.
+
 ## Order
 
 01, then 02 to 05 (02 and 03 need a decision first), then 06. 07 can be decided any time.
