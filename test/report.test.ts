@@ -234,6 +234,60 @@ test("an incremental review resolves the earlier findings it found fixed and kee
   assert.doesNotMatch(again, /Resolved since the last review/);
 });
 
+test("a re-review lists every open finding: new ones, and earlier ones whether it found them again or not", () => {
+  const earlier = (title: string, commented: boolean) => ({
+    fp: fingerprint("src/a.ts", title),
+    file: "src/a.ts",
+    line: 1,
+    severity: "medium" as const,
+    title,
+    body: `${title}, in detail.`,
+    status: "open" as const,
+    commented,
+  });
+  const prior: ReviewState = {
+    v: 1,
+    head: OLD,
+    findings: [earlier("Found again", true), earlier("Not looked at", false)],
+  };
+  const report = buildReport(
+    result([
+      f({
+        title: "Found again",
+        severity: "medium",
+        line: 4,
+        placement: { kind: "lines", start: 4, end: 4, exact: true },
+      }),
+      f({ file: "src/b.ts", title: "New bug" }),
+    ]),
+    { headSha: HEAD, mode: "incremental", trigger: "@multi-review", prior, maxInline: 10 },
+  );
+  // The earlier finding was commented before, so only the new one is.
+  assert.deepEqual(report.inline.map((c) => c.path), ["src/b.ts"]);
+  const summary = report.renderSummary(new Set(report.inline.map((c) => c.fp)));
+  assert.match(summary, /\*\*1 issue\(s\)\*\* \(1 commented inline\) · 2 still open from earlier/);
+  assert.match(summary, /#### Findings\n\n- 🔴 High `src\/b\.ts:2` New bug \(commented inline\)/);
+  // Found again: a line pointing to its earlier comment. Never commented: in full.
+  assert.match(
+    summary,
+    /#### Still open from earlier reviews\n\n- 🟠 Medium `src\/a\.ts:4` Found again \(commented inline\)\n- 🟠 Medium `src\/a\.ts:1` \*\*Not looked at\*\*\n {2}Not looked at, in detail\./,
+  );
+  assert.deepEqual(
+    parseState(summary)!
+      .findings.map((s) => [s.title, s.status, s.commented])
+      .sort(),
+    [
+      ["Found again", "open", true],
+      ["New bug", "open", true],
+      ["Not looked at", "open", false],
+    ],
+  );
+  // The plain text lists the same findings.
+  const text = report.renderText();
+  assert.match(text, /1 issue\(s\) · 2 still open from earlier/);
+  assert.match(text, /Still open from earlier reviews\n {2}.*Found again[\s\S]*Not looked at/);
+});
+
 test("unverified reviews say so, and secrets in model text are redacted", () => {
   process.env.TEST_REPORT_SECRET_TOKEN = "s3cr3t-value-123456";
   try {
